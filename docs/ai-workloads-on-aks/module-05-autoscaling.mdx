@@ -1,0 +1,160 @@
+---
+title: "Module 5 — Configure Autoscaling Profiles"
+description: Set quota-aware autoscaling bounds for both the home-region AKS node pools and the Flex host, then verify scale-out and scale-in behavior before running the workload proof.
+sidebar_position: 6
+tags:
+  - aks
+  - autoscaling
+  - gpu
+  - quota
+---
+
+import Prerequisites from "../../src/components/SharedMarkdown/_prerequisites.mdx";
+
+Before running the workload proof, you need to configure autoscaling bounds that
+respect your regional quota and define the expected scale-out target. This module
+sets those bounds, validates them against your quota snapshot from Module 1, and
+triggers a controlled scale event to confirm the AKS cluster autoscaler is working.
+
+## Objectives
+
+By the end of this module you will be able to:
+
+- Set quota-safe autoscaling bounds for GPU and CPU node pools
+- Understand the difference between home-region AKS node pool autoscaling and Flex host capacity
+- Trigger and observe a scale-out event
+- Confirm scale-in after the test load is removed
+
+<Prerequisites />
+
+## Understanding the capacity model
+
+This lab has two distinct compute locations:
+
+| Location | Managed by | Scales how |
+| ---------- | ----------- | ------------ |
+| Home-region AKS GPU pool (`gput4`) | AKS cluster autoscaler | Adds nodes from Azure capacity on demand |
+| Flex host in `westus2` | Pre-provisioned in Module 3 | Fixed capacity — always `Ready` |
+
+The Flex host does **not** autoscale in this lab. It is pre-provisioned and permanently
+joined. Anyscale can place workers on it immediately without waiting for a scale event.
+
+## Step 1 — Review current pool configuration
+
+```bash
+az aks nodepool list \
+  --resource-group rg-flexany-dev-wus3 \
+  --cluster-name aks-flexany-dev-wus3 \
+  -o table
+```
+
+You should see:
+
+- `sys` — system pool, always running, 1–3 nodes
+- `cpu` — user pool, 0–4 nodes, scales on demand
+- `gput4` — GPU pool, 0–2 nodes (or 0–0 if you are on the CPU path)
+
+## Step 2 — Set quota-aware bounds in `.env`
+
+### GPU path
+
+```bash
+# One warm GPU node keeps the first proof fast; set to 0 for pure cold-start testing
+TF_VAR_gpu_pool_configs='{"T4":{"name":"gput4","vm_size":"Standard_NC16as_T4_v3","product_name":"NVIDIA-T4","gpu_count":"1","min_count":1,"max_count":2,"availability_zones":[]}}'
+```
+
+Ensure `max_count * 16 vCPU ≤ your NCASv3_T4 quota in westus3`.
+
+### CPU path
+
+```bash
+TF_VAR_gpu_pool_configs='{"T4":{"name":"gput4","vm_size":"Standard_NC16as_T4_v3","product_name":"NVIDIA-T4","gpu_count":"1","min_count":0,"max_count":0,"availability_zones":[]}}'
+```
+
+Setting `max_count=0` prevents the autoscaler from ever trying to provision GPU nodes.
+
+## Step 3 — Apply the profile
+
+```bash
+./scripts/anyscale-aks.sh apply
+```
+
+This updates the node pool `min_count`/`max_count` without replacing nodes.
+
+## Step 4 — Trigger a controlled scale event
+
+Deploy a test workload that requests a GPU:
+
+```bash
+kubectl apply -f - <<'EOF'
+apiVersion: v1
+kind: Pod
+metadata:
+  name: scale-trigger-test
+  namespace: default
+spec:
+  restartPolicy: Never
+  tolerations:
+    - key: "nvidia.com/gpu"
+      operator: "Exists"
+      effect: "NoSchedule"
+    - key: "node.anyscale.com/accelerator-type"
+      operator: "Exists"
+      effect: "NoSchedule"
+    - key: "node.anyscale.com/capacity-type"
+      operator: "Exists"
+      effect: "NoSchedule"
+  containers:
+    - name: test
+      image: ubuntu:22.04
+      command: ["sleep", "120"]
+      resources:
+        limits:
+          nvidia.com/gpu: "1"
+EOF
+```
+
+Watch the cluster autoscaler add a node:
+
+```bash
+kubectl get nodes -w
+```
+
+Expected output (example):
+
+```text
+NAME                                     STATUS   ROLES   AGE   VERSION
+aks-gpu-home-39848752-vmss000000         Ready    agent   15m   v1.31.1
+aks-gpu-home-39848752-vmss000001         Ready    agent    4m   v1.31.1
+```
+
+You should see a second GPU node appear within **2–5 minutes** after the pod becomes `Pending`.
+
+:::tip CPU path
+For the CPU path, remove the `nvidia.com/gpu` resource limit and the GPU tolerations.
+The CPU pool will scale instead.
+:::
+
+## Step 5 — Confirm scale-in
+
+Delete the test pod and observe the autoscaler remove the node after the
+scale-down cooldown (default: 10 minutes):
+
+```bash
+kubectl delete pod scale-trigger-test
+kubectl get nodes -w
+```
+
+The GPU node should return to `min_count` after the cooldown.
+
+## Scale profile summary
+
+Before proceeding, confirm your scale profile matches your quota:
+
+```bash
+./scripts/anyscale-aks.sh status | jq '.flex_join_contract, .foundation_contract.aks_contract'
+```
+
+## Next step
+
+Proceed to **[Module 6 — Run the Workload Proof](/docs/ai-workloads-on-aks/module-06-workload-proof)**.

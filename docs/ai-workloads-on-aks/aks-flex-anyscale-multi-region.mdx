@@ -1,0 +1,135 @@
+---
+title: "AKS Flex Node + Anyscale on Azure"
+description: Use AKS Flex Node to extend a single AKS cluster to GPUs in other Azure regions, on-premises bare metal, or other clouds, then run distributed GPU or CPU workloads through Anyscale without changing workload code.
+sidebar_position: 1
+tags:
+  - ai
+  - anyscale
+  - aks
+  - ray
+  - flex-node
+  - gpu
+  - distributed-computing
+---
+
+import HomeRegionDiagram from "./assets/aks-flex-anyscale-multi-region/01-home-region-flex-expansion.svg";
+import DispatchDiagram from "./assets/aks-flex-anyscale-multi-region/02-anyscale-cross-region-dispatch-flow.svg";
+
+export const Diagram = ({ children, caption }) => (
+  <figure style={{ margin: "1.5rem 0" }}>
+    <div style={{ width: "100%", overflowX: "auto" }}>
+      <div style={{ maxWidth: "100%", display: "block" }}>
+        {children}
+      </div>
+    </div>
+    {caption && (
+      <figcaption style={{ textAlign: "center", fontSize: "0.875rem", color: "var(--ifm-color-emphasis-600)", marginTop: "0.5rem" }}>
+        {caption}
+      </figcaption>
+    )}
+  </figure>
+);
+
+## Objective
+
+By the end of this lab you will be able to:
+
+- extend a single AKS cluster to worker nodes located in a **different Azure region, on-premises, or another cloud** using AKS Flex Node,
+- run **distributed AI training and inference workloads** across all attached nodes using Anyscale and Ray — without modifying workload code,
+- choose between a **CPU path** (any host, no GPU quota needed) and a **GPU path** (T4 nodes, NVIDIA driver pre-baked in the host image), and
+- produce machine-readable proof artifacts that confirm placement, saturation, and scaling behavior.
+
+## Topology flexibility
+
+This lab uses **two Azure regions** — an AKS cluster homed in one region (`westus3`) with Flex hosts joined from a second region (`westus2`). That is only one example of what AKS Flex Node supports.
+
+:::info What AKS Flex Node actually allows
+According to the [AKS Flex Node documentation](https://github.com/Azure/AKSFlexNode), any Linux host that can reach the AKS API server over outbound HTTPS can be joined as a worker node — including:
+
+- **Azure VMs in a different region** (as in this lab)
+- **On-premises bare metal or VMs** connected over ExpressRoute, VPN, or WireGuard
+- **VMs on other clouds** reachable via a routed network path
+
+The host does not need to be in Azure. The key requirement is network reachability to the AKS API server and bidirectional pod-to-pod routing between the Flex host and AKS nodes. Swap `westus2` in this lab for your on-premises network range and the steps are identical.
+:::
+
+:::warning GPU support status
+GPU Flex Node support is listed as **"under active validation"** (alpha) in the AKS Flex Node repository.
+AKS Flex Node does **not** install the NVIDIA kernel driver — the host image must have the driver pre-baked.
+This lab uses the `microsoft-dsvm/ubuntu-hpc/2204` marketplace image, which is the current validated baseline.
+The CPU path has no such constraint.
+:::
+
+## Choose your path
+
+This lab is built so you can complete it end to end on either path. **The GPU path is the primary focus** and produces the most meaningful distributed AI evidence. The CPU path is fully functional and recommended if you do not have GPU quota or want to iterate faster.
+
+| | CPU path | GPU path |
+|---|---|---|
+| Flex host SKU | Any 4+ vCPU Linux VM | Standard_NC16as_T4_v3 or equivalent |
+| Quota needed | Standard DSv5 family in both regions | Standard NCASv3_T4 family in both regions |
+| Driver required | No | Yes — must be pre-baked in the host image |
+| Workload | `train.py --cpu-only` | `train.py` (GPU default) |
+| Evidence | Placement and scaling proof | Placement, GPU saturation, and scaling proof |
+
+## Prerequisites
+
+### Common (both paths)
+
+- An Azure subscription with permission to create AKS, networking, storage, and monitoring resources
+- Azure CLI installed and authenticated
+- Terraform 1.9 or later
+- Basic familiarity with AKS, Kubernetes, and managed identities
+
+### GPU path only
+
+- GPU quota available in **both** the home region and the Flex host region:
+  - `Standard_NC16as_T4_v3` = 16 vCPU per node
+  - Minimum: 16 vCPU in each region (1 node per region)
+  - Full saturation target: 32 vCPU in each region (2 nodes per region)
+- Host image with NVIDIA driver pre-installed — this lab uses `microsoft-dsvm/ubuntu-hpc/2204`
+
+:::tip Checking your quota
+```bash
+az vm list-usage --location westus3 --query "[?name.value=='standardNCASv3_T4Family']" -o table
+az vm list-usage --location westus2 --query "[?name.value=='standardNCASv3_T4Family']" -o table
+```
+If either region shows 0 available, use the CPU path or request a quota increase at https://portal.azure.com/#view/Microsoft_Azure_Capacity/QuotaMenuBlade.
+:::
+
+## Architecture
+
+The AKS cluster is homed in `westus3` and owns the Kubernetes control plane, Anyscale cloud binding, and home-region GPU node pools. Flex hosts in `westus2` join the same cluster over VNet peering and appear as standard Kubernetes worker nodes. From Anyscale's perspective there is one cluster — it schedules Ray workers onto whichever nodes have capacity, regardless of region.
+
+<Diagram caption="Home region AKS cluster in westus3 with Flex expansion into westus2">
+  <HomeRegionDiagram style={{ width: "100%", height: "auto", display: "block" }} />
+</Diagram>
+
+Anyscale dispatches distributed training jobs by placing Ray workers across all available nodes. Each worker reports its host, region, and GPU identity to the shared evidence directory.
+
+<Diagram caption="Cross-region dispatch flow: Anyscale schedules Ray workers onto nodes in both locations">
+  <DispatchDiagram style={{ width: "100%", height: "auto", display: "block" }} />
+</Diagram>
+
+## Workshop modules
+
+| Module | What you do | CPU | GPU |
+|--------|-------------|-----|-----|
+| [1 — Environment Setup](./module-01-environment-setup) | Tooling, Azure auth, quota check, path decision | ✅ | ✅ |
+| [2 — AKS Foundation](./module-02-aks-foundation) | Deploy public AKS, storage, ACR, VNet peering | ✅ | ✅ |
+| [3 — Flex Node](./module-03-flex-node) | Provision Flex host, generate config, bootstrap, verify | ✅ | ✅ |
+| [4 — Anyscale Binding](./module-04-anyscale-binding) | Bind cloud, install operator, define compute profiles | ✅ | ✅ |
+| [5 — Autoscaling](./module-05-autoscaling) | Set quota-aware bounds, trigger and verify scale events | ✅ | ✅ |
+| [6 — Workload Proof](./module-06-workload-proof) | Submit distributed training, validate placement evidence | CPU only | GPU + saturation |
+| [7 — Teardown](./module-07-teardown) | Ordered destroy, residual check, idempotency replay | ✅ | ✅ |
+
+## Repository assets
+
+| Path | Purpose |
+|------|---------|
+| `infra/terraform/` | AKS, networking, storage, and Flex host infrastructure |
+| `scripts/anyscale-aks.sh` | Main operator entrypoint (deploy, bootstrap, status, destroy) |
+| `scripts/run-workload-smoke.sh` | Quick CPU smoke run |
+| `workloads/deepspeed_finetune/train.py` | Distributed training proof workload |
+| `workloads/deepspeed_finetune/validate_proof_summary.py` | Evidence contract validator |
+| `.env-template` | Environment variable template for deployment |

@@ -1,0 +1,150 @@
+---
+title: "Module 1 — Environment Setup and Feasibility Gate"
+description: Install tooling, authenticate to Azure, check GPU quota in both regions, and decide which deployment path to follow before spending any money.
+sidebar_position: 2
+tags:
+  - aks
+  - anyscale
+  - flex-node
+  - prerequisites
+---
+
+import Prerequisites from "../../src/components/SharedMarkdown/_prerequisites.mdx";
+
+This module gets your workstation ready, verifies that Azure quota exists in both
+the home and Flex regions, and produces an environment check report that gates
+entry to the remaining modules.
+
+## Objectives
+
+By the end of this module you will be able to:
+
+- Verify all required CLI tools are installed and authenticated
+- Confirm GPU and CPU quota in both `westus3` (home) and `westus2` (Flex)
+- Choose **GPU path** or **CPU path** for the rest of the lab
+- Create and populate your local `.env` file
+
+<Prerequisites
+  tools={[
+    { name: "Helm", url: "https://helm.sh/docs/intro/install/" },
+    { name: "Terraform 1.9+", url: "https://developer.hashicorp.com/terraform/install" },
+  ]}
+/>
+
+## Step 1 — Clone the repository
+
+```bash
+git clone https://github.com/Azure-Samples/aks-labs.git
+cd docs/ai-workloads-on-aks/assets/aks-flex-anyscale-multi-region
+```
+
+:::note
+While this lab is being prepared for upstream submission, clone the candidate repo directly:
+
+```bash
+git clone <repo-url> aks-flex-anyscale-sample
+cd aks-flex-anyscale-sample
+```
+:::
+
+## Step 2 — Create your environment file
+
+```bash
+cp .env-template .env
+```
+
+Open `.env` and fill in your subscription and tenant IDs:
+
+```bash
+ARM_SUBSCRIPTION_ID="<your-subscription-id>"
+ARM_TENANT_ID="<your-tenant-id>"
+TF_VAR_azure_subscription_id="<your-subscription-id>"
+TF_VAR_azure_tenant_id="<your-tenant-id>"
+```
+
+Leave all other values at the template defaults for now. You will adjust region and sizing values in later modules.
+
+## Step 3 — Run the doctor check
+
+```bash
+./scripts/anyscale-aks.sh doctor
+```
+
+Expected output:
+
+```json
+{
+  "subscription": "<your-subscription-id>",
+  "tenant": "<your-tenant-id>",
+  "user": "<your-user>"
+}
+```
+
+If this fails, run `az login` and retry.
+
+## Step 4 — Check quota
+
+### GPU path (Standard NCASv3_T4 family)
+
+```bash
+az vm list-usage --location westus3 \
+  --query "[?name.value=='standardNCASv3_T4Family']" \
+  -o table
+
+az vm list-usage --location westus2 \
+  --query "[?name.value=='standardNCASv3_T4Family']" \
+  -o table
+```
+
+You need at least **16 vCPU available** in each region (one `Standard_NC16as_T4_v3` node).
+For full saturation: **32 vCPU in each region**.
+
+### CPU path (Standard DSv5 family)
+
+```bash
+az vm list-usage --location westus3 \
+  --query "[?name.value=='standardDSv5Family']" \
+  -o table
+
+az vm list-usage --location westus2 \
+  --query "[?name.value=='standardDSv5Family']" \
+  -o table
+```
+
+Any size with 4+ vCPU available in both regions is sufficient.
+
+:::tip Quota increase
+If your GPU quota shows 0, request an increase at
+[Azure Quotas](https://portal.azure.com/#view/Microsoft_Azure_Capacity/QuotaMenuBlade)
+or follow the CPU path while you wait.
+:::
+
+## Step 5 — Decide your path
+
+| Condition | Follow |
+|-----------|--------|
+| NCASv3_T4 quota ≥ 16 vCPU in both regions | GPU path |
+| NCASv3_T4 quota = 0 in either region | CPU path |
+| You want a faster iteration loop | CPU path |
+
+Record your decision in `.env`:
+
+```bash
+# GPU path — leave gpu_pool_configs at the template default
+# CPU path — set min_count to 0 to avoid spinning up GPU nodes
+TF_VAR_gpu_pool_configs='{"T4":{"name":"gput4","vm_size":"Standard_NC16as_T4_v3","product_name":"NVIDIA-T4","gpu_count":"1","min_count":0,"max_count":2,"availability_zones":[]}}'
+```
+
+## Environment check report
+
+Run the validation script to save a timestamped report:
+
+```bash
+./scripts/anyscale-aks.sh doctor | tee .cache/env-check-$(date +%Y%m%d-%H%M%S).json
+```
+
+Keep this file — it is your Module 1 pass evidence.
+
+## Next step
+
+Proceed to **[Module 2 — Deploy the AKS Foundation](/docs/ai-workloads-on-aks/module-02-aks-foundation)**.

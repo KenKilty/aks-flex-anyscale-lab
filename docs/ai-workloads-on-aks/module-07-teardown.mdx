@@ -1,0 +1,138 @@
+---
+title: "Module 7 — Teardown and Replay"
+description: Remove all lab resources in the correct order, verify nothing is orphaned, and confirm that re-running the teardown command is a clean no-op.
+sidebar_position: 8
+tags:
+  - aks
+  - terraform
+  - teardown
+  - idempotency
+---
+
+import Prerequisites from "../../src/components/SharedMarkdown/_prerequisites.mdx";
+
+This module tears down the full deployment in the correct order: workload drain,
+Flex host unjoin, Kubernetes runtime resource removal, and `terraform destroy`.
+It then verifies that the Azure resource group is empty and that running the
+teardown command a second time is a no-op.
+
+## Objectives
+
+By the end of this module you will be able to:
+
+- Tear down all lab resources cleanly from a single command
+- Understand the correct destruction order for AKS Flex Node deployments
+- Confirm no orphaned Azure resources remain after teardown
+- Replay the full lab from scratch using the same `.env` file
+
+<Prerequisites />
+
+## Teardown order
+
+Destroying resources out of order causes Azure API conflicts (for example, deleting
+the VNet before the Flex host is unjoined, or destroying the AKS cluster before the
+Anyscale cloud is de-registered). The correct order is:
+
+1. Drain and stop active Anyscale jobs and workspaces
+2. Delete the Anyscale cloud registration (before extension and AKS cluster)
+3. Remove Flex host RBAC and unjoin the host
+4. Destroy Terraform-managed infrastructure (extension → cluster → networking → storage)
+5. Verify residual resource check
+
+## Step 1 — Drain active workloads
+
+Ensure no jobs are running before teardown:
+
+```bash
+.venv/bin/anyscale job list --status RUNNING
+```
+
+Terminate any active jobs:
+
+```bash
+.venv/bin/anyscale job terminate --name <job-name>
+```
+
+## Step 2 — Destroy
+
+```bash
+./scripts/anyscale-aks.sh destroy
+```
+
+This runs `terraform destroy -auto-approve` with the same variable profile used
+to deploy. Terraform handles the ordering defined by `depends_on` blocks.
+
+Expected duration: **10–20 minutes** (private endpoint deletion is the longest step).
+
+:::warning Transient Azure errors during destroy
+Azure occasionally returns `AnotherOperationInProgress` for private endpoint and
+DNS zone group deletions. If the first destroy run fails, run it again — it is safe
+to retry and will continue from where it stopped.
+:::
+
+## Step 3 — Verify residual resources
+
+After destroy completes:
+
+```bash
+# Confirm the resource group no longer exists
+az group exists -n rg-flexany-dev-wus3
+
+# Confirm Terraform state is empty
+cd infra/terraform && terraform state list
+```
+
+Expected: `false` and an empty state list.
+
+## Step 4 — Idempotency check
+
+Run destroy a second time to confirm it is a no-op:
+
+```bash
+./scripts/anyscale-aks.sh destroy
+```
+
+Expected output ends with:
+
+```
+Apply complete! Resources: 0 added, 0 changed, 0 destroyed.
+```
+
+## Evidence bundle
+
+Collect a final evidence bundle before discarding the environment:
+
+```bash
+mkdir -p .cache/teardown
+./scripts/anyscale-aks.sh status 2>/dev/null || echo "destroyed" > .cache/teardown/status.txt
+az group exists -n rg-flexany-dev-wus3 > .cache/teardown/rg-exists.txt
+cd infra/terraform && terraform state list > ../../.cache/teardown/tf-state.txt 2>/dev/null || echo "empty" > ../../.cache/teardown/tf-state.txt
+echo "teardown complete $(date -u +%Y-%m-%dT%H:%M:%SZ)" > .cache/teardown/summary.txt
+```
+
+## Replaying the lab
+
+To replay from scratch with the same environment:
+
+```bash
+# Clear the generated tfvars and any cached state
+rm -f infra/terraform/terraform.auto.tfvars.json
+rm -f infra/terraform/terraform.tfstate*
+
+# Then start from Module 2
+./scripts/anyscale-aks.sh apply
+```
+
+The `.env` file is unchanged, so all variable values carry over. Re-applying is
+safe and idempotent — Terraform will create only the resources that do not exist.
+
+## Congratulations
+
+You have completed the full lab:
+
+- ✅ Deployed a public AKS cluster in one region with Terraform
+- ✅ Attached a GPU (or CPU) Flex host from another location
+- ✅ Bound Anyscale and defined compute profiles
+- ✅ Ran a distributed AI proof workload across both locations
+- ✅ Produced machine-readable placement evidence
+- ✅ Torn down all resources cleanly and verified idempotency

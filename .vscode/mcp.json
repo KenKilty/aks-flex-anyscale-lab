@@ -1,0 +1,41 @@
+{
+  "servers": {
+    "playwright": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@playwright/mcp@latest",
+        "--headless",
+        "--isolated",
+        "--output-mode",
+        "stdout"
+      ]
+    },
+    "azure": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@azure/mcp@3.0.0-beta.22",
+        "server",
+        "start",
+        "--transport",
+        "stdio",
+        "--read-only"
+      ]
+    },
+    "aks": {
+      "type": "stdio",
+      "command": "aks-mcp",
+      "args": [
+        "--transport",
+        "stdio",
+        "--access-level",
+        "readonly",
+        "--enabled-components",
+        "az_cli,monitor,fleet,network,compute,detectors,advisor,kubectl"
+      ]
+    }
+  }
+}

@@ -1,0 +1,131 @@
+---
+title: "Module 2 — Deploy the AKS Foundation"
+description: Use Terraform to deploy a public AKS cluster in the home region with private storage, ACR, and observability — the fixed starting point for every subsequent module.
+sidebar_position: 3
+tags:
+  - aks
+  - terraform
+  - networking
+  - observability
+---
+
+import Prerequisites from "../../src/components/SharedMarkdown/_prerequisites.mdx";
+import Cleanup from "../../src/components/SharedMarkdown/_cleanup.mdx";
+
+This module deploys the core infrastructure: a public AKS cluster in `westus3`, a
+private storage account, Azure Container Registry, Log Analytics, and the cross-region
+VNet with peering to the Flex region — all through a single Terraform apply.
+
+## Objectives
+
+By the end of this module you will be able to:
+
+- Deploy a production-ready public AKS cluster using Terraform
+- Understand the network topology that allows Flex hosts to join from another location
+- Verify cluster health and obtain a kubeconfig
+- Confirm the cross-region VNet peering is established
+
+<Prerequisites />
+
+## Architecture overview
+
+```
+westus3 (home)                         westus2 (Flex region)
+─────────────────────────────────      ─────────────────────
+  AKS cluster: aks-flexany-dev-wus3      vnet-flexany-dev-wus2
+  VNet: vnet-flexany-dev-wus3            subnet for Flex hosts
+  Storage, ACR, Log Analytics            (Flex host joins in Module 3)
+  ↕ VNet peering ↔──────────────────────↕
+```
+
+The peering is provisioned in this module so the Flex host network is ready before
+Module 3 creates any compute.
+
+## Step 1 — Review the variables
+
+The home region, Flex region, and sizing are already set in `.env`. Confirm:
+
+```bash
+grep -E 'azure_location|region_short|flex_region' .env
+```
+
+Expected:
+
+```
+TF_VAR_azure_location="westus3"
+TF_VAR_region_short="wus3"
+TF_VAR_flex_region="westus2"
+TF_VAR_flex_region_short="wus2"
+```
+
+:::info Using a fallback region
+If AKS capacity in `westus3` is unavailable, set `TF_VAR_azure_location=eastus2` and
+`TF_VAR_region_short=eus2` in a separate env file and run with
+`ANYSCALE_AKS_ENV_FILE=.env.my-fallback ./scripts/anyscale-aks.sh apply`.
+The Flex region stays `westus2` regardless.
+:::
+
+## Step 2 — Run plan
+
+```bash
+./scripts/anyscale-aks.sh plan
+```
+
+This renders tfvars, runs `terraform init` and `terraform validate`, then produces
+a plan file. Review the output — you should see approximately 62–65 resources to add.
+
+## Step 3 — Apply
+
+```bash
+./scripts/anyscale-aks.sh apply
+```
+
+Expected duration: **15–25 minutes** (AKS cluster creation is the longest step).
+
+When complete, Terraform prints the foundation contract:
+
+```
+Outputs:
+  aks_cluster_name = "aks-flexany-dev-wus3"
+  aks_api_server_fqdn = "aks-flexany-dev-wus3-xxxxx.hcp.westus3.azmk8s.io"
+  flex_vnet_id = "/subscriptions/.../vnet-flexany-dev-wus2"
+  foundation_contract.public_aks = true
+  foundation_contract.flex_peering_enabled = true
+```
+
+## Step 4 — Get cluster credentials
+
+```bash
+az aks get-credentials \
+  --resource-group rg-flexany-dev-wus3 \
+  --name aks-flexany-dev-wus3 \
+  --overwrite-existing
+```
+
+## Step 5 — Verify cluster health
+
+```bash
+kubectl get nodes -o wide
+kubectl get pods -n kube-system
+```
+
+You should see the system node pool (`sys`) with all nodes in `Ready` state.
+GPU and CPU node pools start at `min_count=0` so no GPU/CPU nodes appear yet —
+they scale out in Module 5 when the workload runs.
+
+## Step 6 — Confirm VNet peering
+
+```bash
+az network vnet peering list \
+  --resource-group rg-flexany-dev-wus3 \
+  --vnet-name vnet-flexany-dev-wus3 \
+  -o table
+```
+
+Both `aks-to-flex` and `flex-to-aks` peerings should show `Succeeded`.
+
+## Next step
+
+Proceed to **[Module 3 — Attach a Flex Node](/docs/ai-workloads-on-aks/module-03-flex-node)**.
+
+<Cleanup />

@@ -1,0 +1,151 @@
+---
+title: "Module 3 — Attach a Flex Node from Another Location"
+description: Provision a GPU (or CPU) host in westus2, join it to the AKS cluster using AKS Flex Node, verify the node is Ready, and apply GPU labels and taints.
+sidebar_position: 4
+tags:
+  - aks
+  - flex-node
+  - gpu
+  - terraform
+---
+
+import Prerequisites from "../../src/components/SharedMarkdown/_prerequisites.mdx";
+
+This is the core AKS Flex Node step. You will provision a VM in `westus2` (or any
+other location with network reachability to the AKS API server), generate a join
+config, copy it to the host, start the Flex Node agent, and verify the node appears
+in the AKS cluster.
+
+:::info This works beyond Azure regions
+Although this lab uses a second Azure region, the join process is identical for an
+on-premises bare metal machine or a VM on another cloud — as long as it can reach
+the AKS API server over HTTPS and has bidirectional IP routing to AKS node addresses.
+Swap `westus2` for your network and the steps below stay the same.
+:::
+
+:::warning GPU driver requirement
+AKS Flex Node does **not** install the NVIDIA kernel driver. The host image must
+have the driver pre-baked. This lab uses `microsoft-dsvm/ubuntu-hpc/2204` which
+includes a validated NVIDIA driver.
+
+For the **CPU path**, any Ubuntu 22.04 or 24.04 VM works — no special image needed.
+:::
+
+## Objectives
+
+By the end of this module you will be able to:
+
+- Provision a Flex host with Terraform in the peered VNet
+- Generate a Flex Node join config using `aks-flex-config`
+- Bootstrap the host and start `aks-flex-node-agent`
+- Verify the node is Ready in Kubernetes with correct labels and taints
+
+<Prerequisites />
+
+## Step 1 — Enable Flex host provisioning
+
+Edit `.env` and set:
+
+```bash
+# GPU path
+TF_VAR_flex_host_enabled="true"
+TF_VAR_flex_host_vm_size="Standard_NC16as_T4_v3"
+TF_VAR_flex_host_source_image_reference='{"publisher":"microsoft-dsvm","offer":"ubuntu-hpc","sku":"2204","version":"latest"}'
+
+# CPU path — use a smaller standard VM
+# TF_VAR_flex_host_enabled="true"
+# TF_VAR_flex_host_vm_size="Standard_D4s_v5"
+# TF_VAR_flex_host_source_image_reference='{"publisher":"Canonical","offer":"ubuntu-24_04-lts","sku":"server","version":"latest"}'
+```
+
+Also ensure your SSH public key is available:
+
+```bash
+# Auto-loaded from SSH_PRIVATE_KEY_PATH.pub when the field is empty
+TF_VAR_flex_host_admin_ssh_public_key=""
+SSH_PRIVATE_KEY_PATH="${HOME}/.ssh/id_ed25519"
+```
+
+## Step 2 — Apply to provision the Flex host
+
+```bash
+./scripts/anyscale-aks.sh apply
+```
+
+This adds 4–5 new resources (VM, NIC, public IP, NSG SSH rule, cluster user role assignment).
+Expected duration: **3–5 minutes**.
+
+Check the new outputs:
+
+```bash
+./scripts/anyscale-aks.sh status
+```
+
+Note the `flex_host_public_ip` value — you will need it to verify SSH access.
+
+## Step 3 — Set up Flex Node RBAC (one-time per cluster)
+
+```bash
+./scripts/anyscale-aks.sh flex-config
+```
+
+This calls `aks-flex-config setup-node-rbac` (once) and then
+`aks-flex-config generate-node-config --identity` to produce the join config at
+`.cache/flex/aks-flex-node-config.json`.
+
+:::tip What the config contains
+The generated config includes the AKS API server URL, cluster CA, subscription context,
+and the managed identity client ID. It does not contain any secrets — the VM's
+system-assigned identity handles authentication at runtime.
+:::
+
+## Step 4 — Bootstrap the Flex host
+
+```bash
+./scripts/anyscale-aks.sh flex-bootstrap
+```
+
+This copies the config to the VM via SCP, downloads and installs the `aks-flex-node`
+binary, places the config at `/etc/aks-flex-node/config.json`, and starts the
+`aks-flex-node-agent` systemd service.
+
+Expected output (last lines):
+
+```
+level=INFO msg="operation completed successfully" operation=bootstrap duration=39s
+AKS Flex Node agent service started successfully.
+```
+
+## Step 5 — Verify the node joined
+
+Wait 1–2 minutes for kubelet registration, then:
+
+```bash
+kubectl get nodes -o wide
+```
+
+You should see the Flex host (`vm-flex-flexany-dev-wus2`) in `Ready` state alongside
+the AKS system nodes. The `INTERNAL-IP` will be from the `westus2` subnet (`10.60.x.x`).
+
+```bash
+kubectl describe node vm-flex-flexany-dev-wus2 | grep -A5 Labels
+```
+
+For the GPU path, confirm NVIDIA labels are present:
+
+```bash
+kubectl get node vm-flex-flexany-dev-wus2 \
+  -o jsonpath='{.metadata.labels}' | jq 'to_entries[] | select(.key | startswith("nvidia"))'
+```
+
+## Troubleshooting
+
+| Symptom | Likely cause | Resolution |
+|---------|--------------|------------|
+| SSH timeout during bootstrap | NSG rule not yet propagated | Wait 60s and retry `flex-bootstrap` |
+| Node stuck in `NotReady` | Kubelet cannot reach API server | Confirm VNet peering is `Succeeded` in both directions |
+| No NVIDIA labels | GPU driver did not initialise | Check `nvidia-smi` on the host via SSH; re-validate image SKU |
+
+## Next step
+
+Proceed to **[Module 4 — Bind Anyscale](/docs/ai-workloads-on-aks/module-04-anyscale-binding)**.

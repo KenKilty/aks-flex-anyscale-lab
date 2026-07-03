@@ -1,0 +1,23 @@
+## Prerequisites
+
+Before you begin you need:
+
+- An [Azure subscription](https://azure.microsoft.com/free) with permission to create AKS, networking, storage, and managed identity resources
+- [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli) installed and authenticated (`az login`)
+- [Terraform](https://developer.hashicorp.com/terraform/install) 1.9 or later
+- [kubectl](https://kubernetes.io/docs/tasks/tools/) and [kubelogin](https://azure.github.io/kubelogin/)
+- [jq](https://jqlang.org/download/)
+- POSIX-compliant shell (bash or zsh)
+
+{props.tools && props.tools.length > 0 && (
+  <ul>
+    {props.tools.map((tool, i) => (
+      <li key={i}>
+        {tool.url
+          ? <a href={tool.url} target="_blank" rel="noopener noreferrer">{tool.name}</a>
+          : tool.name}
+        {tool.description && ` — ${tool.description}`}
+      </li>
+    ))}
+  </ul>
+)}

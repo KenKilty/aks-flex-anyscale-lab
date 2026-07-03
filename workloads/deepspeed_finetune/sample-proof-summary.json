@@ -1,0 +1,34 @@
+{
+  "run_id": "proof-smoke-0001",
+  "experiment_name": "aks-flexany-proof-smoke",
+  "profile": "smoke",
+  "smoke_mode": true,
+  "synthetic_model": true,
+  "timestamp_unix": 1751486400,
+  "placement": {
+    "expected_regions": ["westus3", "westus2"],
+    "placement_hint_env": "AKS_NODE_REGION",
+    "observed_region_hint": "westus2",
+    "observed_node_hint": "vm-flex-flexany-dev-wus2",
+    "observed_world_size": 2
+  },
+  "worker_snapshot": {
+    "run_id": "proof-smoke-0001",
+    "experiment_name": "aks-flexany-proof-smoke",
+    "rank": 0,
+    "world_size": 2,
+    "hostname": "vm-flex-flexany-dev-wus2",
+    "cuda_available": true,
+    "device_name": "NVIDIA T4",
+    "region_hint": "westus2",
+    "node_hint": "vm-flex-flexany-dev-wus2"
+  },
+  "metrics": {
+    "epoch": 0,
+    "loss": 1.2345,
+    "num_batches": 4,
+    "steps_per_worker": 4,
+    "world_size": 2
+  },
+  "status": "draft"
+}

@@ -1,0 +1,202 @@
+---
+title: "Module 4 — Bind Anyscale and Configure Compute Profiles"
+description: Register the AKS cluster as an Anyscale cloud, install the Anyscale operator via the AKS marketplace extension, and define compute configs that target both the home-region GPU pool and the Flex host.
+sidebar_position: 5
+tags:
+  - anyscale
+  - aks
+  - ray
+  - gpu
+---
+
+import Prerequisites from "../../src/components/SharedMarkdown/_prerequisites.mdx";
+
+Anyscale uses a concept of a **cloud** that maps to a Kubernetes cluster with specific
+storage, identity, and compute resources registered to it. This module wires the AKS
+cluster you deployed in Module 2 to an Anyscale cloud, installs the operator, and
+creates compute configs that tell Anyscale where GPU and CPU capacity lives.
+
+## Objectives
+
+By the end of this module you will be able to:
+
+- Create an Anyscale cloud bound to the AKS cluster
+- Install the Anyscale operator via the AKS marketplace extension
+- Define compute configs that target the home-region GPU pool, the CPU pool, and the Flex host
+- Submit a test job that starts and terminates cleanly
+
+<Prerequisites
+  tools={[
+    {
+      name: "Anyscale CLI",
+      url: "https://docs.anyscale.com/reference/anyscale-cli",
+      description: "install with: uv pip install anyscale",
+    },
+  ]}
+/>
+
+## Background: Anyscale on AKS
+
+Anyscale on AKS is available through the Azure Marketplace as an AKS cluster extension.
+The extension installs the Anyscale operator in the `anyscale-operator` namespace and
+connects it to the Anyscale control plane at `console.azure.anyscale.com`.
+
+When a Ray job is submitted, Anyscale places Ray head and worker pods on nodes that
+match the compute config's resource requirements. Because the Flex host is a standard
+Kubernetes node, Anyscale schedules on it transparently — no workload changes needed.
+
+:::info Preview feature
+Anyscale on Azure is currently in public preview. Cross-region scheduling onto Flex hosts
+is the scenario this lab explicitly validates. If you encounter unexpected behavior,
+capture it in the evidence bundle (Module 6) and open an issue.
+:::
+
+## Step 1 — Authenticate to Anyscale
+
+```bash
+ANYSCALE_HOST=https://console.azure.anyscale.com \
+  .venv/bin/anyscale login
+```
+
+Follow the browser prompt. After login, verify:
+
+```bash
+.venv/bin/anyscale cloud list
+```
+
+## Step 2 — Register the cloud (Terraform)
+
+The Anyscale cloud resource and the AKS marketplace extension are managed by the
+Terraform configuration in `infra/terraform/anyscale.tf` (to be completed in a
+future module — this step describes the manual equivalent during the preview period).
+
+:::note
+During public preview, the `anyscale.tf` Terraform module is under active development.
+If you encounter errors, the manual equivalent using `az aks extension` and `az resource`
+commands is always available as a fallback.
+:::
+
+Set the Anyscale platform flag in `.env`:
+
+```bash
+TF_VAR_anyscale_platform='{"enabled":true}'
+```
+
+Then apply:
+
+```bash
+./scripts/anyscale-aks.sh apply
+```
+
+This creates the Anyscale cloud ARM resource and installs the cluster extension.
+Expected duration: **10–15 minutes** (extension reconciliation is slow on first install).
+
+## Step 3 — Verify the operator
+
+```bash
+kubectl get pods -n anyscale-operator
+```
+
+Expected output:
+
+```text
+NAME                              READY   STATUS    RESTARTS   AGE
+anyscale-controller-manager-xyz   1/1     Running   0          5m
+anyscale-webhook-xyz              1/1     Running   0          5m
+```
+
+Confirm the cloud is visible in the console:
+
+```bash
+.venv/bin/anyscale cloud list | grep flexany
+```
+
+Expected output:
+
+```text
+flexany-prod-eus2  READY  2024-12-15T10:30:00Z
+```
+
+## Step 4 — Define compute configs
+
+Compute configs tell Anyscale which node types to use for head and worker pods.
+Create configs for three pools:
+
+**CPU workers (home region):**
+
+```yaml
+# compute-configs/cpu-home.yaml
+name: cpu-home
+cloud: <your-cloud-name>
+head_node_type:
+  name: head
+  instance_type: Standard_D4s_v5
+worker_node_types:
+  - name: cpu-worker
+    instance_type: Standard_D16s_v5
+    min_workers: 0
+    max_workers: 4
+```
+
+**GPU workers (home region):**
+
+```yaml
+# compute-configs/gpu-home.yaml
+name: gpu-home
+cloud: <your-cloud-name>
+head_node_type:
+  name: head
+  instance_type: Standard_D4s_v5
+worker_node_types:
+  - name: gpu-worker
+    instance_type: Standard_NC16as_T4_v3
+    min_workers: 0
+    max_workers: 2
+    resources:
+      accelerator_type: T4
+      accelerator_count: 1
+```
+
+**GPU workers (Flex region):**
+
+```yaml
+# compute-configs/gpu-flex.yaml
+name: gpu-flex
+cloud: <your-cloud-name>
+head_node_type:
+  name: head
+  instance_type: Standard_D4s_v5
+worker_node_types:
+  - name: gpu-flex-worker
+    instance_type: Standard_NC16as_T4_v3
+    min_workers: 0
+    max_workers: 2
+    resources:
+      accelerator_type: T4
+      accelerator_count: 1
+    node_selector:
+      topology.kubernetes.io/region: westus2
+```
+
+Apply them:
+
+```bash
+.venv/bin/anyscale compute-config create compute-configs/cpu-home.yaml
+.venv/bin/anyscale compute-config create compute-configs/gpu-home.yaml
+.venv/bin/anyscale compute-config create compute-configs/gpu-flex.yaml
+```
+
+## Step 5 — Submit a test job
+
+```bash
+.venv/bin/anyscale job submit \
+  --name module4-connectivity-test \
+  --compute-config cpu-home \
+  -- python -c "import ray; ray.init(); print(ray.cluster_resources())"
+```
+
+The job should start, print cluster resources, and exit with status `SUCCEEDED`.
+
+## Next step
+
+Proceed to **[Module 5 — Configure Autoscaling Profiles](/docs/ai-workloads-on-aks/module-05-autoscaling)**.

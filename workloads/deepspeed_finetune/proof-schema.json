@@ -1,0 +1,118 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/aks-flex/workloads/deepspeed_finetune/proof-schema.json",
+  "title": "AKS Flex deepspeed_finetune proof summary",
+  "type": "object",
+  "required": ["run_id", "experiment_name", "placement", "worker_snapshot", "metrics", "status"],
+  "properties": {
+    "run_id": {
+      "type": "string"
+    },
+    "experiment_name": {
+      "type": "string"
+    },
+    "profile": {
+      "type": "string",
+      "enum": ["smoke", "full"]
+    },
+    "smoke_mode": {
+      "type": "boolean"
+    },
+    "synthetic_model": {
+      "type": "boolean"
+    },
+    "timestamp_unix": {
+      "type": "integer"
+    },
+    "placement": {
+      "type": "object",
+      "required": ["expected_regions", "observed_world_size"],
+      "properties": {
+        "expected_regions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "placement_hint_env": {
+          "type": "string"
+        },
+        "observed_region_hint": {
+          "type": "string"
+        },
+        "observed_node_hint": {
+          "type": "string"
+        },
+        "observed_world_size": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "worker_snapshot": {
+      "type": "object",
+      "required": ["run_id", "rank", "world_size", "hostname", "cuda_available", "device_name"],
+      "properties": {
+        "run_id": {
+          "type": "string"
+        },
+        "experiment_name": {
+          "type": "string"
+        },
+        "rank": {
+          "type": "integer"
+        },
+        "world_size": {
+          "type": "integer"
+        },
+        "hostname": {
+          "type": "string"
+        },
+        "cuda_available": {
+          "type": "boolean"
+        },
+        "device_name": {
+          "type": "string"
+        },
+        "region_hint": {
+          "type": "string"
+        },
+        "node_hint": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "metrics": {
+      "type": "object",
+      "required": ["epoch", "loss", "num_batches", "steps_per_worker", "world_size"],
+      "properties": {
+        "epoch": {
+          "type": "integer"
+        },
+        "loss": {
+          "type": "number"
+        },
+        "num_batches": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "steps_per_worker": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "world_size": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": true
+    },
+    "status": {
+      "type": "string",
+      "enum": ["draft", "passed", "failed"]
+    }
+  },
+  "additionalProperties": true
+}

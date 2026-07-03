@@ -1,0 +1,112 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1800 1040" role="img" aria-labelledby="title desc">
+  <title id="title">Cross-region dispatch flow for Anyscale on AKS with Flex Nodes</title>
+  <desc id="desc">Sequence diagram style SVG describing how jobs submitted to Anyscale are dispatched over a home-region AKS cluster that includes remote region Flex Nodes.</desc>
+
+  <defs>
+    <linearGradient id="bg2" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#fcfcfd"/>
+      <stop offset="100%" stop-color="#f1f5f9"/>
+    </linearGradient>
+    <filter id="softShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="4" stdDeviation="6" flood-opacity="0.15"/>
+    </filter>
+    <marker id="arrBlue" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+      <path d="M 0 0 L 12 6 L 0 12 z" fill="#2563eb"/>
+    </marker>
+    <marker id="arrEmerald" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+      <path d="M 0 0 L 12 6 L 0 12 z" fill="#059669"/>
+    </marker>
+    <marker id="arrOrange" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+      <path d="M 0 0 L 12 6 L 0 12 z" fill="#ea580c"/>
+    </marker>
+    <style>
+      .title { font: 700 34px 'Segoe UI', Arial, sans-serif; fill: #0f172a; }
+      .subtitle { font: 600 16px 'Segoe UI', Arial, sans-serif; fill: #334155; }
+      .lane { font: 700 16px 'Segoe UI', Arial, sans-serif; fill: #1e293b; }
+      .text { font: 500 14px 'Segoe UI', Arial, sans-serif; fill: #334155; }
+      .small { font: 500 12px 'Segoe UI', Arial, sans-serif; fill: #475569; }
+      .chip { font: 600 12px 'Segoe UI', Arial, sans-serif; fill: #0f172a; }
+      .note { font: 500 13px 'Segoe UI', Arial, sans-serif; fill: #334155; }
+    </style>
+  </defs>
+
+  <rect width="1800" height="1040" fill="url(#bg2)"/>
+  <text x="70" y="68" class="title">How Anyscale Dispatches Work Across westus3 + westus2</text>
+  <text x="70" y="96" class="subtitle">Home anchor in westus3 AKS; additional GPU workers contributed by westus2 Flex Nodes.</text>
+
+  <rect x="60" y="130" width="1680" height="840" rx="16" fill="#ffffff" stroke="#cbd5e1" filter="url(#softShadow)"/>
+
+  <g>
+    <rect x="95" y="165" width="260" height="66" rx="10" fill="#eef2ff" stroke="#a5b4fc"/>
+    <text x="132" y="193" class="lane">User / CI Pipeline</text>
+    <text x="132" y="213" class="small">Job submitter</text>
+
+    <rect x="420" y="165" width="290" height="66" rx="10" fill="#e0e7ff" stroke="#93c5fd"/>
+    <text x="466" y="193" class="lane">Anyscale Control Plane</text>
+    <text x="467" y="213" class="small">Scheduler + Workspace APIs</text>
+
+    <rect x="780" y="165" width="295" height="66" rx="10" fill="#dcfce7" stroke="#6ee7b7"/>
+    <text x="835" y="193" class="lane">AKS Cluster (westus3)</text>
+    <text x="840" y="213" class="small">Head + native pools</text>
+
+    <rect x="1145" y="165" width="285" height="66" rx="10" fill="#ffedd5" stroke="#fdba74"/>
+    <text x="1190" y="193" class="lane">Flex Nodes (westus2)</text>
+    <text x="1198" y="213" class="small">Additional GPU workers</text>
+
+    <rect x="1495" y="165" width="210" height="66" rx="10" fill="#ecfeff" stroke="#67e8f9"/>
+    <text x="1532" y="193" class="lane">Observability</text>
+    <text x="1530" y="213" class="small">Console + metrics</text>
+  </g>
+
+  <g stroke="#cbd5e1" stroke-width="2" stroke-dasharray="7 6">
+    <line x1="225" y1="240" x2="225" y2="920"/>
+    <line x1="565" y1="240" x2="565" y2="920"/>
+    <line x1="928" y1="240" x2="928" y2="920"/>
+    <line x1="1288" y1="240" x2="1288" y2="920"/>
+    <line x1="1600" y1="240" x2="1600" y2="920"/>
+  </g>
+
+  <g>
+    <line x1="225" y1="280" x2="565" y2="280" stroke="#2563eb" stroke-width="3" marker-end="url(#arrBlue)"/>
+    <text x="250" y="270" class="text">1) Submit training job (DeepSpeed finetune profile)</text>
+
+    <line x1="565" y1="330" x2="928" y2="330" stroke="#2563eb" stroke-width="3" marker-end="url(#arrBlue)"/>
+    <text x="590" y="320" class="text">2) Create/scale Ray cluster session in home AKS</text>
+
+    <line x1="928" y1="380" x2="1288" y2="380" stroke="#ea580c" stroke-width="3" marker-end="url(#arrOrange)"/>
+    <text x="952" y="370" class="text">3) Scheduler requests extra GPU workers from Flex region</text>
+
+    <line x1="1288" y1="430" x2="928" y2="430" stroke="#ea580c" stroke-width="3" marker-end="url(#arrOrange)"/>
+    <text x="973" y="420" class="text">4) westus2 Flex nodes join as schedulable K8s nodes</text>
+
+    <line x1="928" y1="480" x2="565" y2="480" stroke="#059669" stroke-width="3" marker-end="url(#arrEmerald)"/>
+    <text x="588" y="470" class="text">5) Capacity graph updated: westus3 + westus2 GPU inventory</text>
+
+    <line x1="565" y1="530" x2="928" y2="530" stroke="#059669" stroke-width="3" marker-end="url(#arrEmerald)"/>
+    <text x="590" y="520" class="text">6) Task/actor placement plan emitted by scheduler</text>
+
+    <line x1="928" y1="580" x2="1288" y2="580" stroke="#059669" stroke-width="3" marker-end="url(#arrEmerald)"/>
+    <text x="953" y="570" class="text">7) GPU worker pods placed onto Flex nodes where needed</text>
+
+    <line x1="928" y1="630" x2="1600" y2="630" stroke="#2563eb" stroke-width="3" marker-end="url(#arrBlue)"/>
+    <text x="952" y="620" class="text">8) Runtime streams logs, utilization, and scaling events</text>
+
+    <line x1="1600" y1="680" x2="225" y2="680" stroke="#2563eb" stroke-width="3" marker-end="url(#arrBlue)"/>
+    <text x="860" y="670" class="text">9) Evidence exported: per-region worker usage and GPU saturation charts</text>
+  </g>
+
+  <g>
+    <rect x="115" y="740" width="1580" height="150" rx="12" fill="#f8fafc" stroke="#cbd5e1"/>
+    <text x="145" y="772" class="lane">Dispatch Semantics That Make This Work</text>
+    <text x="145" y="802" class="note">- Anyscale dispatches against Kubernetes resources presented by one AKS cluster, not by Azure region boundary.</text>
+    <text x="145" y="826" class="note">- AKS Flex Node extends that cluster with westus2 nodes, so placement can span regions while control remains in westus3.</text>
+    <text x="145" y="850" class="note">- Region-aware node labels and affinity rules ensure proofs can confirm execution in both westus3 and westus2.</text>
+
+    <rect x="1220" y="760" width="445" height="112" rx="10" fill="#ffffff" stroke="#94a3b8"/>
+    <text x="1245" y="788" class="chip">Quota target in this module</text>
+    <text x="1245" y="813" class="small">westus3: 2 x NC16as_T4_v3 = 32 vCPU, 2 GPU</text>
+    <text x="1245" y="836" class="small">westus2: 2 x NC16as_T4_v3 = 32 vCPU, 2 GPU</text>
+    <text x="1245" y="859" class="small">Total saturation target: 64 vCPU, 4 GPU</text>
+  </g>
+</svg>

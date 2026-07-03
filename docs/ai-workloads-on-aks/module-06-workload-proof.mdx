@@ -1,0 +1,171 @@
+---
+title: "Module 6 — Run the Distributed Workload Proof"
+sidebar_label: "Module 6 — Run a Distributed AI Job Across Both Locations"
+description: Submit the deepspeed_finetune proof workload through Anyscale, collect per-worker placement evidence, and validate that workers ran on nodes in both locations.
+sidebar_position: 7
+tags:
+  - anyscale
+  - ray
+  - gpu
+  - deepspeed
+  - distributed-computing
+---
+
+import Prerequisites from "../../src/components/SharedMarkdown/_prerequisites.mdx";
+
+This module runs the `deepspeed_finetune` proof workload — a Ray Train + DeepSpeed
+distributed training script adapted for this lab. Each worker emits its hostname,
+region hint, and (for the GPU path) device name to a shared evidence file. After
+the run you can prove that workers executed on nodes in both locations without
+reading raw logs.
+
+## Objectives
+
+By the end of this module you will be able to:
+
+- Submit a distributed workload through Anyscale that spans the home-region AKS node pool and the Flex host
+- Confirm per-worker region placement from machine-readable output
+- Observe GPU utilisation on T4 nodes (GPU path)
+- Validate the proof summary against the expected schema
+
+## Path differences
+
+| Step | CPU path | GPU path |
+| ------ | ---------- | ------------ |
+| Compute config | `cpu-home` | `gpu-home` + `gpu-flex` |
+| Workers | CPU-only Ray actors | GPU-accelerated Ray Train workers |
+| Evidence | Placement + loss curve | Placement + GPU utilisation + loss curve |
+| Duration | ~10 min | ~20–40 min (includes autoscale wait) |
+
+<Prerequisites
+  tools={[
+    {
+      name: "Anyscale CLI",
+      url: "https://docs.anyscale.com/reference/anyscale-cli",
+    },
+  ]}
+/>
+
+## Step 1 — Choose a run profile
+
+Set `profile` in the workload call:
+
+- `smoke` — 1 epoch, 4 debug steps, 2 workers (fast validation, ~10 min)
+- `full` — all epochs, full dataset, up to 4 workers (full saturation, ~40 min GPU)
+
+For a first run, start with `smoke`.
+
+## Step 2 — CPU path — local smoke run
+
+Validate the workload logic without a cluster:
+
+```bash
+./scripts/run-workload-smoke.sh
+```
+
+This runs `train.py --profile smoke --cpu-only` locally and produces a proof
+summary at `.cache/workloads/deepspeed_finetune/smoke/proof-summary.json`.
+
+Validate the output:
+
+```bash
+python3 workloads/deepspeed_finetune/validate_proof_summary.py \
+  .cache/workloads/deepspeed_finetune/smoke/proof-summary.json
+```
+
+Expected: `validated: .cache/workloads/deepspeed_finetune/smoke/proof-summary.json`
+
+The proof summary schema includes:
+
+- `metadata`: experiment ID, timestamp, profile, worker count
+- `placement`: region hints, cross-location evidence
+- `metrics`: loss curve, GPU utilization (GPU path)
+- `worker_snapshot`: per-worker hostname, region_hint, device (GPU path)
+
+## Step 3 — Submit through Anyscale (CPU path)
+
+```bash
+.venv/bin/anyscale job submit \
+  --name flex-proof-cpu-$(date +%Y%m%d-%H%M) \
+  --compute-config cpu-home \
+  -- python workloads/deepspeed_finetune/train.py \
+       --profile smoke \
+       --cpu-only \
+       --num-workers 2 \
+       --evidence-dir /mnt/cluster_storage/evidence
+```
+
+## Step 4 — Submit through Anyscale (GPU path)
+
+```bash
+.venv/bin/anyscale job submit \
+  --name flex-proof-gpu-$(date +%Y%m%d-%H%M) \
+  --compute-config gpu-flex \
+  -- python workloads/deepspeed_finetune/train.py \
+       --profile smoke \
+       --num-workers 2 \
+       --expected-regions westus3 westus2 \
+       --evidence-dir /mnt/cluster_storage/evidence
+```
+
+:::tip Watching the job
+
+```bash
+.venv/bin/anyscale job logs --name <job-name> --follow
+```
+
+:::
+
+## Step 5 — Retrieve and validate the proof summary
+
+After the job completes, copy the evidence from cluster storage:
+
+```bash
+mkdir -p .cache/evidence
+# Copy from wherever cluster storage maps in your environment
+cp /mnt/cluster_storage/evidence/proof-summary.json \
+   .cache/evidence/proof-summary-$(date +%Y%m%d-%H%M).json
+
+python3 workloads/deepspeed_finetune/validate_proof_summary.py \
+  .cache/evidence/proof-summary-*.json
+```
+
+## Step 6 — Verify placement
+
+Open the proof summary and check the `placement` section:
+
+```bash
+jq '.placement' .cache/evidence/proof-summary-*.json
+```
+
+Expected for the GPU path:
+
+```json
+{
+  "expected_regions": ["westus3", "westus2"],
+  "observed_region_hint": "westus2",
+  "observed_world_size": 2
+}
+```
+
+Verify that workers ran in both regions by checking `worker_snapshot.region_hint`
+across ranks. Worker rank 0 writes the summary — check logs for all workers:
+
+```bash
+.venv/bin/anyscale job logs --name <job-name> | grep "region_hint"
+```
+
+## GPU utilisation (GPU path)
+
+While the job is running, check GPU utilisation on the Flex host:
+
+```bash
+ssh -i ~/.ssh/id_ed25519 azureoperator@$(./scripts/anyscale-aks.sh output -raw flex_host_public_ip) \
+  'nvidia-smi --query-gpu=utilization.gpu,memory.used --format=csv,noheader,nounits'
+```
+
+A value above 80% confirms GPU saturation.
+
+## Next step
+
+Proceed to **[Module 7 — Teardown and Replay](/docs/ai-workloads-on-aks/module-07-teardown)**.
