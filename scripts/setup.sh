@@ -314,6 +314,20 @@ cleanup_residual_anyscale_platform_resources() {
   done
 }
 
+destroy_verified_complete() {
+  local rg state_resources
+
+  rg="$(resource_group_name)"
+  state_resources="$(terraform_cmd state list 2>/dev/null || true)"
+
+  if [[ -z "${state_resources}" && "$(az group exists --name "${rg}" --only-show-errors)" != "true" ]]; then
+    printf 'info: destroy verified complete; Terraform state is empty and resource group %s is absent\n' "${rg}" >&2
+    return 0
+  fi
+
+  return 1
+}
+
 ensure_anyscale_gateway() {
   local rg cluster namespace gateway_name gateway_class
 
@@ -479,52 +493,62 @@ bootstrap_flex_host() {
 
   scp "${ssh_opts[@]}" "${config_path}" "${admin_user}@${host_ip}:/tmp/aks-flex-node-config.json"
 
-  # shellcheck disable=SC2029,SC1083,SC2140
+  # shellcheck disable=SC2029
   ssh "${ssh_opts[@]}" "${admin_user}@${host_ip}" \
-    "set -euo pipefail && \
-     TARGET_VERSION='${AKS_FLEX_NODE_VERSION}' && \
-     CURRENT_VERSION='' && \
-     if command -v /usr/local/bin/aks-flex-node >/dev/null 2>&1; then \
-       CURRENT_VERSION=\$(/usr/local/bin/aks-flex-node version 2>/dev/null | head -1 | grep -Eo 'v[0-9]+\.[0-9]+\.[^[:space:]]+' || true); \
-     fi && \
-     if [ \"\${CURRENT_VERSION}\" != \"\${TARGET_VERSION}\" ]; then \
-       TMP_DIR=\$(mktemp -d) && \
-       curl -fsSLo \"\${TMP_DIR}/aks-flex-node.tgz\" '${flex_release_url}' && \
-       tar -xzf \"\${TMP_DIR}/aks-flex-node.tgz\" -C \"\${TMP_DIR}\" && \
-       sudo systemctl stop aks-flex-node-agent || true && \
-       sudo install -m 0755 \"\${TMP_DIR}/aks-flex-node-linux-amd64\" /usr/local/bin/aks-flex-node && \
-       rm -rf \"\${TMP_DIR}\"; \
-     fi && \
-     sudo install -d -m 0755 /etc/aks-flex-node && \
-     sudo install -m 0600 /tmp/aks-flex-node-config.json /etc/aks-flex-node/config.json && \
-    FLEX_POD_CIDR='${TF_VAR_flex_pod_cidr:-10.244.0.0/16}' && \
-     AKS_VNET_CIDR='${aks_vnet_cidr}' && \
-     OUT_IFACE=\$(ip route get 1.1.1.1 | awk '{for (i = 1; i <= NF; i++) if (\$i == "dev") print \$(i + 1)}' | head -1) && \
-     PRIMARY_IP=\$(ip route get 1.1.1.1 | awk '{for (i = 1; i <= NF; i++) if (\$i == "src") print \$(i + 1)}' | head -1) && \
-     test -n "\${OUT_IFACE}" && test -n "\${PRIMARY_IP}" && \
-     sudo sysctl -w net.ipv4.ip_forward=1 >/dev/null && \
-     echo 'net.ipv4.ip_forward=1' | sudo tee /etc/sysctl.d/99-aks-flex-node-forwarding.conf >/dev/null && \
-     (sudo iptables -t nat -D POSTROUTING -s "\${FLEX_POD_CIDR}" -o "\${OUT_IFACE}" -j MASQUERADE 2>/dev/null || true) && \
-     if ! sudo iptables -t nat -C POSTROUTING -s "\${FLEX_POD_CIDR}" -d "\${AKS_VNET_CIDR}" -o "\${OUT_IFACE}" -j ACCEPT 2>/dev/null; then \
-       sudo iptables -t nat -I POSTROUTING 1 -s "\${FLEX_POD_CIDR}" -d "\${AKS_VNET_CIDR}" -o "\${OUT_IFACE}" -j ACCEPT; \
-     fi && \
-     if ! sudo iptables -t nat -C POSTROUTING -s "\${FLEX_POD_CIDR}" -o "\${OUT_IFACE}" -j SNAT --to-source "\${PRIMARY_IP}" 2>/dev/null; then \
-       sudo iptables -t nat -A POSTROUTING -s "\${FLEX_POD_CIDR}" -o "\${OUT_IFACE}" -j SNAT --to-source "\${PRIMARY_IP}"; \
-     fi && \
-     sudo /usr/local/bin/aks-flex-node start --config /etc/aks-flex-node/config.json && \
-     if sudo systemctl cat aks-flex-node-agent >/dev/null 2>&1; then \
-       sudo systemctl status aks-flex-node-agent --no-pager -l || true; \
-       sudo systemctl is-active --quiet aks-flex-node-agent || { \
-         echo 'aks-flex-node-agent.service is not active after bootstrap' >&2; \
-         sudo journalctl -u aks-flex-node-agent -n 200 --no-pager || true; \
-         exit 1; \
-       }; \
-     else \
-       echo 'aks-flex-node-agent.service unit was not created by bootstrap' >&2; \
-       sudo machinectl list --no-pager || true; \
-       sudo journalctl -M kube1 -u kubelet -n 200 --no-pager || true; \
-       exit 1; \
-     fi"
+    "AKS_FLEX_NODE_VERSION='${AKS_FLEX_NODE_VERSION}' FLEX_RELEASE_URL='${flex_release_url}' FLEX_POD_CIDR='${TF_VAR_flex_pod_cidr:-10.244.0.0/16}' AKS_VNET_CIDR='${aks_vnet_cidr}' bash -s" <<'REMOTE_FLEX_BOOTSTRAP'
+set -euo pipefail
+
+TARGET_VERSION="${AKS_FLEX_NODE_VERSION}"
+CURRENT_VERSION=""
+if command -v /usr/local/bin/aks-flex-node >/dev/null 2>&1; then
+  CURRENT_VERSION="$(/usr/local/bin/aks-flex-node version 2>/dev/null | head -1 | grep -Eo 'v[0-9]+\.[0-9]+\.[^[:space:]]+' || true)"
+fi
+
+if [[ "${CURRENT_VERSION}" != "${TARGET_VERSION}" ]]; then
+  TMP_DIR="$(mktemp -d)"
+  curl -fsSLo "${TMP_DIR}/aks-flex-node.tgz" "${FLEX_RELEASE_URL}"
+  tar -xzf "${TMP_DIR}/aks-flex-node.tgz" -C "${TMP_DIR}"
+  sudo systemctl stop aks-flex-node-agent || true
+  sudo install -m 0755 "${TMP_DIR}/aks-flex-node-linux-amd64" /usr/local/bin/aks-flex-node
+  rm -rf "${TMP_DIR}"
+fi
+
+sudo install -d -m 0755 /etc/aks-flex-node
+sudo install -m 0600 /tmp/aks-flex-node-config.json /etc/aks-flex-node/config.json
+
+OUT_IFACE="$(ip route get 1.1.1.1 | awk '{for (i = 1; i <= NF; i++) if ($i == "dev") print $(i + 1)}' | head -1)"
+PRIMARY_IP="$(ip route get 1.1.1.1 | awk '{for (i = 1; i <= NF; i++) if ($i == "src") print $(i + 1)}' | head -1)"
+test -n "${OUT_IFACE}"
+test -n "${PRIMARY_IP}"
+
+configure_flex_pod_nat() {
+  sudo iptables -t nat -D POSTROUTING -s "${FLEX_POD_CIDR}" -o "${OUT_IFACE}" -j MASQUERADE 2>/dev/null || true
+  sudo iptables -t nat -D POSTROUTING -s "${FLEX_POD_CIDR}" -o "${OUT_IFACE}" -j SNAT --to-source "${PRIMARY_IP}" 2>/dev/null || true
+  if ! sudo iptables -t nat -C POSTROUTING -s "${FLEX_POD_CIDR}" ! -d "${AKS_VNET_CIDR}" -o "${OUT_IFACE}" -j SNAT --to-source "${PRIMARY_IP}" 2>/dev/null; then
+    sudo iptables -t nat -A POSTROUTING -s "${FLEX_POD_CIDR}" ! -d "${AKS_VNET_CIDR}" -o "${OUT_IFACE}" -j SNAT --to-source "${PRIMARY_IP}"
+  fi
+}
+
+sudo sysctl -w net.ipv4.ip_forward=1 >/dev/null
+echo 'net.ipv4.ip_forward=1' | sudo tee /etc/sysctl.d/99-aks-flex-node-forwarding.conf >/dev/null
+configure_flex_pod_nat
+
+sudo /usr/local/bin/aks-flex-node start --config /etc/aks-flex-node/config.json
+configure_flex_pod_nat
+if sudo systemctl cat aks-flex-node-agent >/dev/null 2>&1; then
+  sudo systemctl status aks-flex-node-agent --no-pager -l || true
+  sudo systemctl is-active --quiet aks-flex-node-agent || {
+    echo 'aks-flex-node-agent.service is not active after bootstrap' >&2
+    sudo journalctl -u aks-flex-node-agent -n 200 --no-pager || true
+    exit 1
+  }
+else
+  echo 'aks-flex-node-agent.service unit was not created by bootstrap' >&2
+  sudo machinectl list --no-pager || true
+  sudo journalctl -M kube1 -u kubelet -n 200 --no-pager || true
+  exit 1
+fi
+REMOTE_FLEX_BOOTSTRAP
 
   az aks get-credentials \
     --resource-group "${cluster_rg}" \
@@ -660,7 +684,14 @@ main() {
     set -e
     if [[ "${destroy_rc}" -ne 0 ]]; then
       cleanup_residual_anyscale_platform_resources
+      set +e
       terraform_cmd destroy -auto-approve
+      destroy_rc=$?
+      set -e
+      if [[ "${destroy_rc}" -ne 0 ]]; then
+        destroy_verified_complete && return 0
+        return "${destroy_rc}"
+      fi
     fi
     ;;
   output)

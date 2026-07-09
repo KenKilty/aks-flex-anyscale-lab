@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# shellcheck disable=SC2154
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ENV_FILE="${ANYSCALE_AKS_ENV_FILE:-${ROOT_DIR}/.env}"
+NVIDIA_DEVICE_PLUGIN_VERSION="${NVIDIA_DEVICE_PLUGIN_VERSION:-v0.17.1}"
+
+die() {
+  printf 'error: %s\n' "$1" >&2
+  exit 1
+}
+
+need_cmd() {
+  command -v "$1" >/dev/null 2>&1 || die "missing required command: $1"
+}
+
+source_env() {
+  [[ -f "${ENV_FILE}" ]] || die "missing env file: ${ENV_FILE}"
+  set -a
+  # shellcheck disable=SC1090
+  source "${ENV_FILE}"
+  set +a
+}
+
+resolve_gpu_pool_name() {
+  jq -r 'to_entries[0].value.name // empty' <<<"${TF_VAR_gpu_pool_configs}"
+}
+
+main() {
+  local gpu_allocatable gpu_pool_name
+
+  need_cmd jq
+  need_cmd kubectl
+  source_env
+
+  [[ "${TF_VAR_gpu_pool_configs}" != "{}" ]] || die "GPU pool config is disabled in ${ENV_FILE}"
+  gpu_pool_name="$(resolve_gpu_pool_name)"
+  [[ -n "${gpu_pool_name}" ]] || die "unable to determine GPU pool name from TF_VAR_gpu_pool_configs"
+
+  kubectl apply -f "https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/${NVIDIA_DEVICE_PLUGIN_VERSION}/deployments/static/nvidia-device-plugin.yml"
+
+  kubectl -n kube-system patch ds nvidia-device-plugin-daemonset --type strategic -p "$(
+    cat <<'PATCH'
+spec:
+  template:
+    spec:
+      nodeSelector:
+        kubernetes.azure.com/accelerator: nvidia
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+        - key: node.anyscale.com/capacity-type
+          operator: Equal
+          value: ON_DEMAND
+          effect: NoSchedule
+        - key: node.anyscale.com/accelerator-type
+          operator: Equal
+          value: GPU
+          effect: NoSchedule
+PATCH
+  )"
+
+  kubectl -n kube-system rollout status ds/nvidia-device-plugin-daemonset --timeout=5m
+  gpu_allocatable="$(kubectl get nodes -l "agentpool=${gpu_pool_name}" -o json | jq '[.items[].status.allocatable["nvidia.com/gpu"]? | tonumber] | add // 0')"
+  [[ "${gpu_allocatable}" -ge 1 ]] || die "GPU node pool ${gpu_pool_name} has no allocatable nvidia.com/gpu after device-plugin rollout"
+
+  printf 'NVIDIA device plugin ready: %s allocatable GPU(s) in pool %s\n' "${gpu_allocatable}" "${gpu_pool_name}"
+}
+
+main "$@"

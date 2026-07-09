@@ -22,7 +22,7 @@ By the end of this module you will be able to:
 - Set quota-safe autoscaling bounds for the CPU node pool
 - Understand the difference between home-region AKS node pool autoscaling and Flex host capacity
 - Re-run the explicit Flex Ready, kube-proxy-flex, DNS, and Anyscale health checks
-- Confirm the cluster is ready for the CPU-only proof
+- Confirm the cluster is ready for the CPU proof, or for the GPU proof when T4 quota is enabled
 
 <Prerequisites />
 
@@ -75,7 +75,7 @@ TF_VAR_cpu_pool_max_count="4"
 TF_VAR_gpu_pool_configs='{"T4":{"name":"gput4","vm_size":"Standard_NC16as_T4_v3","product_name":"NVIDIA-T4","gpu_count":"1","min_count":0,"max_count":0,"availability_zones":[]}}'
 ```
 
-### Optional future GPU path
+### GPU path
 
 ```bash
 TF_VAR_gpu_pool_configs='{"T4":{"name":"gput4","vm_size":"Standard_NC16as_T4_v3","product_name":"NVIDIA-T4","gpu_count":"1","min_count":1,"max_count":2,"availability_zones":[]}}'
@@ -99,6 +99,22 @@ Apply complete! Resources: 0 added, 1 changed, 0 destroyed.
 
 ## Step 4 — Run the final preflight gates
 
+If you enabled the GPU path, install the NVIDIA device plugin before running the
+gate. The helper pins the plugin to AKS GPU nodes and adds the taint tolerations
+used by this lab's GPU pool.
+
+```bash
+./scripts/install-nvidia-device-plugin.sh
+```
+
+Expected output:
+
+```text
+daemonset.apps/nvidia-device-plugin-daemonset configured
+daemon set "nvidia-device-plugin-daemonset" successfully rolled out
+NVIDIA device plugin ready: 1 allocatable GPU(s) in pool gput4
+```
+
 Use the gate script instead of pasting long diagnostic pods by hand. It checks the
 CPU scale profile, optional GPU pool setting, Flex node readiness, Flex service
 routing, Flex DNS, Flex HTTPS egress, AKS-to-Flex pod reachability, and the
@@ -112,7 +128,7 @@ Expected output:
 
 ```text
 PASS M5-01 CPU node pool autoscaling configured
-SKIP M5-02 GPU path disabled in current env profile
+PASS M5-02 GPU node pool available with allocatable GPU
 PASS Flex node vm-flex-flexany-dev-wus3 Ready in westus3
 PASS kube-proxy-flex ready 1/1
 PASS Flex ClusterFirst DNS resolves Anyscale and Kubernetes service names

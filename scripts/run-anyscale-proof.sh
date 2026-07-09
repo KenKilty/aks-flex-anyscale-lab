@@ -151,6 +151,10 @@ resolve_gpu_pool_name() {
   jq -r 'to_entries[0].value.name // empty' <<<"${TF_VAR_gpu_pool_configs}"
 }
 
+resolve_gpu_accelerator_type() {
+  jq -r 'to_entries[0].key // empty' <<<"${TF_VAR_gpu_pool_configs}"
+}
+
 check_cpu_proof_preflight() {
   local anyscale_dns_name
 
@@ -231,14 +235,46 @@ write_compute_config() {
   local head_memory_gi="8"
   local worker_cpu="2"
   local worker_memory_gi="8"
+  local worker_gpu=""
+  local worker_required_labels=""
+  local worker_tolerations
+
+  worker_tolerations="
+        tolerations:
+          - key: aks-flex-node
+            operator: Equal
+            value: \"true\"
+            effect: NoSchedule"
 
   # Match private-sample strategy: resource-based config + agentpool selectors,
   # not cloud VM instance_type values. CPU proof workers run on the Flex node.
   if [[ "${worker_name}" == "gpu-worker" ]]; then
+    local gpu_accelerator_type
     worker_agentpool="$(resolve_gpu_pool_name)"
+    gpu_accelerator_type="$(resolve_gpu_accelerator_type)"
     [[ -n "${worker_agentpool}" ]] || die "unable to determine GPU pool name from TF_VAR_gpu_pool_configs"
+    [[ -n "${gpu_accelerator_type}" ]] || die "unable to determine GPU accelerator type from TF_VAR_gpu_pool_configs"
     worker_cpu="4"
     worker_memory_gi="16"
+    worker_gpu="
+      GPU: 1"
+    worker_required_labels="
+    required_labels:
+      ray.io/accelerator-type: ${gpu_accelerator_type}"
+    worker_tolerations="
+        tolerations:
+          - key: nvidia.com/gpu
+            operator: Equal
+            value: present
+            effect: NoSchedule
+          - key: node.anyscale.com/capacity-type
+            operator: Equal
+            value: ON_DEMAND
+            effect: NoSchedule
+          - key: node.anyscale.com/accelerator-type
+            operator: Equal
+            value: GPU
+            effect: NoSchedule"
   fi
 
   cat >"${COMPUTE_CONFIG_DIR}/${config_name}.yaml" <<EOF
@@ -256,17 +292,15 @@ worker_nodes:
     required_resources:
       CPU: ${worker_cpu}
       memory: ${worker_memory_gi}Gi
+${worker_gpu}
+${worker_required_labels}
     min_nodes: 0
     max_nodes: ${worker_count:-1}
     advanced_instance_config:
       spec:
         nodeSelector:
           agentpool: ${worker_agentpool}
-        tolerations:
-          - key: aks-flex-node
-            operator: Equal
-            value: "true"
-            effect: NoSchedule
+${worker_tolerations}
 EOF
 }
 
@@ -370,6 +404,7 @@ submit_job_for_mode() {
   local submit_ok="false"
   local submit_cmd
   local submit_workdir_value
+  local worker_group_start_timeout_s
   local wait_rc
 
   job_name="flex-proof-${mode}-$(date +%Y%m%d-%H%M%S)"
@@ -378,6 +413,10 @@ submit_job_for_mode() {
   placement_region="${TF_VAR_azure_location}"
   if [[ "${mode}" == "cpu" ]]; then
     placement_region="${TF_VAR_flex_region}"
+  fi
+  worker_group_start_timeout_s="${ANYSCALE_PROOF_WORKER_GROUP_START_TIMEOUT_S:-300}"
+  if [[ "${mode}" == "gpu" && -z "${ANYSCALE_PROOF_WORKER_GROUP_START_TIMEOUT_S:-}" ]]; then
+    worker_group_start_timeout_s="900"
   fi
 
   submit_workdir_value="${WORKLOAD_DIR}"
@@ -408,7 +447,7 @@ submit_job_for_mode() {
   submit_cmd+=(
     --env "ANYSCALE_PROOF_STORAGE_ACCOUNT=${STORAGE_ACCOUNT}"
     --env "ANYSCALE_PROOF_STORAGE_CONTAINER=${STORAGE_CONTAINER}"
-    --env "RAY_TRAIN_WORKER_GROUP_START_TIMEOUT_S=${ANYSCALE_PROOF_WORKER_GROUP_START_TIMEOUT_S:-300}"
+    --env "RAY_TRAIN_WORKER_GROUP_START_TIMEOUT_S=${worker_group_start_timeout_s}"
   )
 
   submit_cmd+=(

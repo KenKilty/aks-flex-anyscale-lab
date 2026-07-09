@@ -243,12 +243,16 @@ check_m5() {
   if [[ "${gpu_config}" == "{}" ]]; then
     skip "M5-02 GPU path disabled in current env profile"
   else
-    local gpu_pool_name gpu_pool_state
+    local gpu_allocatable gpu_pool_name gpu_pool_state gpu_ready_node_count
     gpu_pool_name="$(resolve_gpu_pool_name)"
     [[ -n "${gpu_pool_name}" ]] || die "M5-02 unable to determine GPU pool name from TF_VAR_gpu_pool_configs"
     gpu_pool_state="$(az aks nodepool show --resource-group "${RG}" --cluster-name "${CLUSTER}" --name "${gpu_pool_name}" --query provisioningState -o tsv 2>/dev/null || true)"
     [[ "${gpu_pool_state}" == "Succeeded" ]] || die "M5-02 GPU node pool ${gpu_pool_name} not ready: ${gpu_pool_state:-missing}"
-    pass "M5-02 GPU node pool available"
+    gpu_ready_node_count="$(kubectl get nodes -l "agentpool=${gpu_pool_name}" -o json | jq '[.items[] | select((.status.conditions[]? | select(.type == "Ready" and .status == "True")))] | length')"
+    [[ "${gpu_ready_node_count}" -ge 1 ]] || die "M5-02 GPU node pool ${gpu_pool_name} has no Ready nodes"
+    gpu_allocatable="$(kubectl get nodes -l "agentpool=${gpu_pool_name}" -o json | jq '[.items[].status.allocatable["nvidia.com/gpu"]? | tonumber] | add // 0')"
+    [[ "${gpu_allocatable}" -ge 1 ]] || die "M5-02 GPU node pool ${gpu_pool_name} has no allocatable nvidia.com/gpu; install/repair NVIDIA device plugin and driver readiness before running GPU proof"
+    pass "M5-02 GPU node pool available with allocatable GPU"
   fi
 
   if [[ "${TF_VAR_flex_host_enabled}" != "true" ]]; then

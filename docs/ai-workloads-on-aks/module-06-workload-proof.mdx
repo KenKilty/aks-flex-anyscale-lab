@@ -32,8 +32,8 @@ By the end of this module you will be able to:
 
 | Step | CPU path | GPU path |
 | ------ | ---------- | ------------ |
-| Compute config | Created by `./scripts/run-anyscale-proof.sh --mode cpu` | Future optional config after CPU proof succeeds |
-| Workers | CPU-only Ray actors | GPU-accelerated Ray Train workers |
+| Compute config | Created by `./scripts/run-anyscale-proof.sh --mode cpu` | Created by `./scripts/run-anyscale-proof.sh --mode gpu` |
+| Workers | CPU-only Ray actors on the Flex node | GPU-accelerated Ray Train workers on the AKS GPU pool |
 | Evidence | Placement + loss curve + log-emitted proof summary | Placement + GPU utilisation + loss curve |
 | Duration | ~10 min | ~20–40 min (includes autoscale wait) |
 
@@ -128,6 +128,30 @@ The CPU proof is the primary workshop proof. It must place the Ray head on AKS C
 capacity in `westus2`, place the Ray worker on `vm-flex-flexany-dev-wus3`, and keep
 worker DNS policy as `ClusterFirst`.
 :::
+
+## GPU path — submit through Anyscale
+
+Run this only after Module 5 reports `PASS M5-02 GPU node pool available with
+allocatable GPU`. The GPU proof uses the AKS GPU node pool declared in
+`TF_VAR_gpu_pool_configs`; it does not place GPU workers on the Flex host unless you
+provide a Flex image with NVIDIA drivers and runtime support.
+
+```bash
+./scripts/run-anyscale-proof.sh --mode gpu
+```
+
+Expected output includes GPU compute config creation and an autoscale wait if the
+second T4 worker needs another node:
+
+```text
+(anyscale +1.3s) Created compute config: 'gpu-home:1'
+info: submit attempt 1/3 for flex-proof-gpu-20260709-110159
+(anyscale +6m44.7s) Job 'flex-proof-gpu-20260709-110159' transitioned from STARTING to RUNNING
+```
+
+The first GPU run can spend several minutes scaling a second T4 node and pulling the
+CUDA Ray image. The proof harness gives GPU workers a longer startup window than the
+CPU path for that reason.
 
 ## Step 5 — Observe placement and job state
 
@@ -268,10 +292,12 @@ region, and the harness checks that a Kubernetes worker pod lands in the Flex
 region. A stale or globally injected home-region hint should fail validation rather
 than being accepted as placement evidence.
 
-## Optional future GPU utilisation
+## Flex GPU host note
 
-GPU validation is outside the primary path. After the CPU proof succeeds and GPU quota
-is available, you can extend the lab by using a GPU Flex host and checking utilisation:
+The GPU proof above validates AKS GPU capacity. A GPU-sized Flex VM can join the
+cluster, but the default Ubuntu image does not include NVIDIA host libraries or the
+container runtime integration required to advertise `nvidia.com/gpu`. To run GPU
+workers on Flex, use a pre-baked GPU image and verify the host first:
 
 ```bash
 ssh -i ~/.ssh/id_ed25519 azureoperator@$(./scripts/anyscale-aks.sh output -raw flex_host_public_ip) \
