@@ -15,28 +15,14 @@ module "network" {
   vnet_address_space = var.vnet_address_space
   subnet_cidrs       = var.subnet_cidrs
   subnet_names = {
-    aks_nodes         = local.names.subnet_aks_nodes
-    aks_apiserver     = local.names.subnet_aks_apiserver
-    dns_resolver_in   = local.names.subnet_dns_resolver_in
-    dns_resolver_out  = local.names.subnet_dns_resolver_out
-    private_endpoints = local.names.subnet_private_endpoints
-    firewall          = local.names.subnet_firewall
-    bastion           = local.names.subnet_bastion
+    aks_nodes        = local.names.subnet_aks_nodes
+    dns_resolver_in  = local.names.subnet_dns_resolver_in
+    dns_resolver_out = local.names.subnet_dns_resolver_out
+    firewall         = local.names.subnet_firewall
+    bastion          = local.names.subnet_bastion
   }
 
   nsg_aks_nodes_name = local.names.nsg_aks_nodes
-  nsg_pe_name        = local.names.nsg_pe
-}
-
-module "dns" {
-  source = "./modules/dns"
-
-  resource_group_name = azurerm_resource_group.this.name
-  zones               = local.private_dns_zones
-  vnet_links = {
-    workload = module.network.vnet_id
-  }
-  tags = var.tags
 }
 
 module "observability" {
@@ -46,22 +32,13 @@ module "observability" {
   location                    = azurerm_resource_group.this.location
   log_analytics_name          = local.names.log_analytics
   ampls_name                  = local.names.ampls
-  ampls_private_endpoint_name = local.names.pep_ampls
   retention_in_days           = var.log_analytics_retention_days
   internet_ingestion_enabled  = var.log_analytics_internet_ingestion_enabled
   internet_query_enabled      = var.log_analytics_internet_query_enabled
   ampls_enabled               = var.ampls_enabled
   ampls_ingestion_access_mode = var.ampls_ingestion_access_mode
   ampls_query_access_mode     = var.ampls_query_access_mode
-  private_endpoint_subnet_id  = module.network.subnet_ids.private_endpoints
-  ampls_private_dns_zone_ids = {
-    monitor  = module.dns.zone_ids["monitor"]
-    oms      = module.dns.zone_ids["oms"]
-    ods      = module.dns.zone_ids["ods"]
-    agentsvc = module.dns.zone_ids["agentsvc"]
-    blob     = module.dns.zone_ids["blob"]
-  }
-  tags = var.tags
+  tags                        = var.tags
 }
 
 module "storage" {
@@ -75,12 +52,6 @@ module "storage" {
   container_name       = "${var.project}-${var.environment}-blob"
   replication_type     = var.storage_replication_type
   cors_rule            = var.storage_cors_rule
-
-  pe_subnet_id = module.network.subnet_ids.private_endpoints
-  pe_dns_zone_ids = {
-    blob = module.dns.zone_ids["blob"]
-    dfs  = module.dns.zone_ids["dfs"]
-  }
 
   log_analytics_workspace_id  = module.observability.log_analytics_workspace_id
   diagnostic_settings_enabled = var.terraform_managed_diagnostic_settings_enabled
@@ -106,8 +77,6 @@ module "acr" {
   tags                = var.tags
 
   name                        = local.names.acr
-  pe_subnet_id                = module.network.subnet_ids.private_endpoints
-  pe_dns_zone_id              = module.dns.zone_ids["acr"]
   zone_redundancy_enabled     = var.acr_zone_redundancy_enabled
   log_analytics_workspace_id  = module.observability.log_analytics_workspace_id
   diagnostic_settings_enabled = var.terraform_managed_diagnostic_settings_enabled
@@ -169,15 +138,17 @@ module "flex_host" {
   location            = var.flex_region
   tags                = var.tags
 
-  name                   = local.names.flex_host
-  subnet_id              = azurerm_subnet.flex_hosts.id
-  public_ip_name         = local.names.flex_host_public_ip
-  public_ip_enabled      = var.flex_host_public_ip_enabled
-  vm_size                = var.flex_host_vm_size
-  admin_username         = var.flex_host_admin_username
-  admin_ssh_public_key   = var.flex_host_admin_ssh_public_key
-  os_disk_size_gb        = var.flex_host_os_disk_size_gb
-  source_image_reference = var.flex_host_source_image_reference
+  name                        = local.names.flex_host
+  subnet_id                   = azurerm_subnet.flex_hosts.id
+  public_ip_name              = local.names.flex_host_public_ip
+  public_ip_enabled           = var.flex_host_public_ip_enabled
+  vm_size                     = var.flex_host_vm_size
+  admin_username              = var.flex_host_admin_username
+  admin_ssh_public_key        = var.flex_host_admin_ssh_public_key
+  os_disk_size_gb             = var.flex_host_os_disk_size_gb
+  source_image_reference      = var.flex_host_source_image_reference
+  secondary_ip_configurations = var.flex_host_secondary_ip_configurations
+  user_assigned_identity_ids  = var.flex_host_user_assigned_identity_ids
 
   depends_on = [
     azurerm_virtual_network_peering.aks_to_flex,
@@ -190,6 +161,14 @@ resource "azurerm_role_assignment" "flex_host_cluster_user" {
 
   scope                = module.aks.cluster_id
   role_definition_name = "Azure Kubernetes Service Cluster User Role"
+  principal_id         = module.flex_host[0].principal_id
+}
+
+resource "azurerm_role_assignment" "flex_host_cluster_rbac_admin" {
+  count = var.flex_host_enabled ? 1 : 0
+
+  scope                = module.aks.cluster_id
+  role_definition_name = "Azure Kubernetes Service RBAC Cluster Admin"
   principal_id         = module.flex_host[0].principal_id
 }
 

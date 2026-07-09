@@ -19,7 +19,19 @@ resource "azurerm_network_interface" "this" {
     name                          = "ipconfig"
     subnet_id                     = var.subnet_id
     private_ip_address_allocation = "Dynamic"
+    primary                       = true
     public_ip_address_id          = var.public_ip_enabled ? azurerm_public_ip.this[0].id : null
+  }
+
+  dynamic "ip_configuration" {
+    for_each = var.secondary_ip_configurations
+    content {
+      name                          = ip_configuration.value.name
+      subnet_id                     = var.subnet_id
+      private_ip_address_allocation = ip_configuration.value.private_ip_address_allocation
+      private_ip_address            = try(ip_configuration.value.private_ip_address, null)
+      primary                       = false
+    }
   }
 }
 
@@ -40,7 +52,8 @@ resource "azurerm_linux_virtual_machine" "this" {
   }
 
   identity {
-    type = "SystemAssigned"
+    type         = length(var.user_assigned_identity_ids) > 0 ? "SystemAssigned, UserAssigned" : "SystemAssigned"
+    identity_ids = length(var.user_assigned_identity_ids) > 0 ? var.user_assigned_identity_ids : null
   }
 
   os_disk {

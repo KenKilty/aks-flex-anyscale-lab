@@ -11,8 +11,6 @@ resource "azurerm_virtual_network" "this" {
 
 ###############################################################################
 # Subnets
-# - aks_apiserver subnet must be delegated to Microsoft.ContainerService/managedClusters
-#   Docs: https://learn.microsoft.com/azure/aks/api-server-vnet-integration
 # - AzureFirewallSubnet / AzureBastionSubnet names are reserved by Azure.
 ###############################################################################
 resource "azurerm_subnet" "aks_nodes" {
@@ -20,29 +18,6 @@ resource "azurerm_subnet" "aks_nodes" {
   resource_group_name  = var.resource_group_name
   virtual_network_name = azurerm_virtual_network.this.name
   address_prefixes     = [var.subnet_cidrs.aks_nodes]
-}
-
-resource "azurerm_subnet" "aks_apiserver" {
-  name                 = var.subnet_names.aks_apiserver
-  resource_group_name  = var.resource_group_name
-  virtual_network_name = azurerm_virtual_network.this.name
-  address_prefixes     = [var.subnet_cidrs.aks_apiserver]
-
-  delegation {
-    name = "aks-apiserver-delegation"
-    service_delegation {
-      name    = "Microsoft.ContainerService/managedClusters"
-      actions = ["Microsoft.Network/virtualNetworks/subnets/join/action"]
-    }
-  }
-}
-
-resource "azurerm_subnet" "private_endpoints" {
-  name                              = var.subnet_names.private_endpoints
-  resource_group_name               = var.resource_group_name
-  virtual_network_name              = azurerm_virtual_network.this.name
-  address_prefixes                  = [var.subnet_cidrs.private_endpoints]
-  private_endpoint_network_policies = "Enabled"
 }
 
 resource "azurerm_subnet" "dns_resolver_in" {
@@ -104,18 +79,6 @@ resource "azurerm_network_security_group" "aks_nodes" {
 resource "azurerm_subnet_network_security_group_association" "aks_nodes" {
   subnet_id                 = azurerm_subnet.aks_nodes.id
   network_security_group_id = azurerm_network_security_group.aks_nodes.id
-}
-
-resource "azurerm_network_security_group" "pe" {
-  name                = var.nsg_pe_name
-  resource_group_name = var.resource_group_name
-  location            = var.location
-  tags                = var.tags
-}
-
-resource "azurerm_subnet_network_security_group_association" "pe" {
-  subnet_id                 = azurerm_subnet.private_endpoints.id
-  network_security_group_id = azurerm_network_security_group.pe.id
 }
 
 ###############################################################################

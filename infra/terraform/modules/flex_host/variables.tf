@@ -28,6 +28,30 @@ variable "public_ip_enabled" {
   default = true
 }
 
+variable "secondary_ip_configurations" {
+  type = list(object({
+    name                          = string
+    private_ip_address            = optional(string)
+    private_ip_address_allocation = optional(string, "Dynamic")
+  }))
+  default = []
+
+  validation {
+    condition = alltrue([
+      for config in var.secondary_ip_configurations :
+      config.name != "ipconfig" &&
+      contains(["Dynamic", "Static"], config.private_ip_address_allocation) &&
+      (config.private_ip_address_allocation != "Static" || try(length(config.private_ip_address) > 0, false))
+    ])
+    error_message = "secondary_ip_configurations must not use name ipconfig, allocation must be Dynamic or Static, and Static configs must include private_ip_address."
+  }
+}
+
+variable "user_assigned_identity_ids" {
+  type    = list(string)
+  default = []
+}
+
 variable "vm_size" {
   type = string
 }

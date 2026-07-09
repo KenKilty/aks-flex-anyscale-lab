@@ -13,6 +13,7 @@ REQUIRED_TOP_LEVEL_KEYS = {
     "placement",
     "worker_snapshot",
     "metrics",
+    "storage_proof",
     "status",
 }
 
@@ -34,6 +35,7 @@ def validate_summary(summary: dict[str, object]) -> None:
     placement = summary["placement"]
     worker_snapshot = summary["worker_snapshot"]
     metrics = summary["metrics"]
+    storage_proof = summary["storage_proof"]
 
     if not isinstance(placement, dict):
         fail("placement must be an object")
@@ -41,6 +43,8 @@ def validate_summary(summary: dict[str, object]) -> None:
         fail("worker_snapshot must be an object")
     if not isinstance(metrics, dict):
         fail("metrics must be an object")
+    if not isinstance(storage_proof, dict):
+        fail("storage_proof must be an object")
 
     for key in ("expected_regions", "observed_world_size"):
         if key not in placement:
@@ -53,6 +57,13 @@ def validate_summary(summary: dict[str, object]) -> None:
     for key in ("epoch", "loss", "num_batches", "steps_per_worker", "world_size"):
         if key not in metrics:
             fail(f"metrics missing key: {key}")
+
+    for key in ("account_name", "container_name", "client_id_present", "path", "uri"):
+        if key not in storage_proof:
+            fail(f"storage_proof missing key: {key}")
+
+    if not str(storage_proof["uri"]).startswith("az://"):
+        fail("storage_proof uri must use az://")
 
 
 def main(argv: list[str]) -> None:

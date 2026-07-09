@@ -45,19 +45,6 @@ variable "cors_rule" {
   })
 }
 
-variable "pe_subnet_id" {
-  type        = string
-  description = "Subnet ID where the storage account private endpoints will be deployed."
-}
-
-variable "pe_dns_zone_ids" {
-  description = "Private DNS zone IDs for blob/dfs subresources."
-  type = object({
-    blob = string
-    dfs  = string
-  })
-}
-
 variable "log_analytics_workspace_id" {
   description = "Log Analytics workspace ID for storage diagnostic settings."
   type        = string

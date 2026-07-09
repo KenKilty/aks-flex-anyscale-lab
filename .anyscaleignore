@@ -1,0 +1,13 @@
+.git
+.venv
+.venv-smoke
+node_modules
+build
+.docusaurus
+.cache
+.github
+infra
+docs
+src
+*.log
+terraform.tfstate

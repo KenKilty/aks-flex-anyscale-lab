@@ -1,7 +1,8 @@
 ---
 title: "Module 1 — Environment Setup and Feasibility Gate"
-description: Install tooling, authenticate to Azure, check GPU quota in both regions, and decide which deployment path to follow before spending any money.
+description: Install tooling, authenticate to Azure, check CPU quota for the westus2 AKS and westus3 Flex path, and confirm the lab is ready to proceed.
 sidebar_position: 2
+sidebar_label: "Module 1 — Environment Setup"
 tags:
   - aks
   - anyscale
@@ -11,8 +12,8 @@ tags:
 
 import Prerequisites from "../../src/components/SharedMarkdown/_prerequisites.mdx";
 
-This module gets your workstation ready, verifies that Azure quota exists in both
-the home and Flex regions, and produces an environment check report that gates
+This module gets your workstation ready, verifies that Azure quota exists for the
+CPU-first westus2/westus3 path, and produces an environment check report that gates
 entry to the remaining modules.
 
 ## Objectives
@@ -20,9 +21,42 @@ entry to the remaining modules.
 By the end of this module you will be able to:
 
 - Verify all required CLI tools are installed and authenticated
-- Confirm GPU and CPU quota in both `westus3` (home) and `westus2` (Flex)
-- Choose **GPU path** or **CPU path** for the rest of the lab
+- Confirm CPU quota in both regions (home and Flex)
+- Keep GPU as an optional future path, not the primary workshop route
 - Create and populate your local `.env` file
+
+## Regional Prerequisites
+
+This lab uses a **two-region architecture** to demonstrate hybrid AKS + Flex Node capabilities:
+
+- **Home region (AKS cluster)**: Must support the Anyscale operator AKS extension
+- **Flex region (Flex host)**: Must have reachable network capacity for the Flex VM and proof worker
+
+**Recommended configuration for this lab:**
+
+- **Home: West US 2 (westus2)** — Public AKS cluster, storage, ACR, and Anyscale operator extension
+- **Flex: West US 3 (westus3)** — Flex host joined as an external AKS node
+
+**Why this pair?**
+
+- The AKS control plane and Azure-native Anyscale deployment stay in the home region
+- The Flex host proves cross-region node join, scheduling, DNS, and service routing
+- The CPU proof uses `Standard_D4s_v5`, so it is cheaper and faster to repeat
+- Both regions are in the same geography, minimizing latency for cross-region peering
+
+**Other supported regions** for the home cluster (if westus2 unavailable):
+
+- East US (eastus)
+- East US 2 (eastus2)
+- West Europe (westeurope)
+- UK South (uksouth)
+- Australia East (australiaeast)
+
+:::caution Module 4 requires supported region
+If you deploy the AKS cluster to an unsupported region in Module 2, you will need to
+redeploy before reaching Module 4 (Anyscale Binding). Check quota and region support
+**now** before proceeding.
+:::
 
 <Prerequisites
   tools={[
@@ -34,18 +68,11 @@ By the end of this module you will be able to:
 ## Step 1 — Clone the repository
 
 ```bash
-git clone https://github.com/Azure-Samples/aks-labs.git
-cd docs/ai-workloads-on-aks/assets/aks-flex-anyscale-multi-region
-```
-
-:::note
-While this lab is being prepared for upstream submission, clone the candidate repo directly:
-
-```bash
 git clone <repo-url> aks-flex-anyscale-sample
 cd aks-flex-anyscale-sample
 ```
-:::
+
+Use the repository URL provided with this workshop run.
 
 ## Step 2 — Create your environment file
 
@@ -84,56 +111,81 @@ If this fails, run `az login` and retry.
 
 ## Step 4 — Check quota
 
-### GPU path (Standard NCASv3_T4 family)
-
-```bash
-az vm list-usage --location westus3 \
-  --query "[?name.value=='standardNCASv3_T4Family']" \
-  -o table
-
-az vm list-usage --location westus2 \
-  --query "[?name.value=='standardNCASv3_T4Family']" \
-  -o table
-```
-
-You need at least **16 vCPU available** in each region (one `Standard_NC16as_T4_v3` node).
-For full saturation: **32 vCPU in each region**.
-
 ### CPU path (Standard DSv5 family)
 
 ```bash
-az vm list-usage --location westus3 \
-  --query "[?name.value=='standardDSv5Family']" \
-  -o table
-
 az vm list-usage --location westus2 \
   --query "[?name.value=='standardDSv5Family']" \
   -o table
+
+az vm list-usage --location westus3 \
+  --query "[?name.value=='standardDSv5Family']" \
+  -o table
 ```
 
-Any size with 4+ vCPU available in both regions is sufficient.
+Expected output:
 
-:::tip Quota increase
-If your GPU quota shows 0, request an increase at
-[Azure Quotas](https://portal.azure.com/#view/Microsoft_Azure_Capacity/QuotaMenuBlade)
-or follow the CPU path while you wait.
-:::
+```text
+Name                 CurrentValue    Limit
+-------------------  --------------  -------
+Standard DSv5 Family 0               20
+```
 
-## Step 5 — Decide your path
+You need at least **4 vCPU available** in each region for the CPU proof. The reference
+profile uses `Standard_D4s_v5` for the Flex host and AKS CPU capacity.
 
-| Condition | Follow |
-|-----------|--------|
-| NCASv3_T4 quota ≥ 16 vCPU in both regions | GPU path |
-| NCASv3_T4 quota = 0 in either region | CPU path |
-| You want a faster iteration loop | CPU path |
-
-Record your decision in `.env`:
+### Optional future GPU path (Standard NCASv3_T4 family)
 
 ```bash
-# GPU path — leave gpu_pool_configs at the template default
-# CPU path — set min_count to 0 to avoid spinning up GPU nodes
+az vm list-usage --location westus2 \
+  --query "[?name.value=='standardNCASv3_T4Family']" \
+  -o table
+
+az vm list-usage --location westus3 \
+  --query "[?name.value=='standardNCASv3_T4Family']" \
+  -o table
+```
+
+Expected output:
+
+```text
+Name                        CurrentValue    Limit
+--------------------------  --------------  -------
+Standard NCASv3_T4 Family   0               0
+```
+
+GPU quota is not required for the organized path in this workshop.
+
+:::tip Quota increase
+If your CPU quota is low, request an increase at
+[Azure Quotas](https://portal.azure.com/#view/Microsoft_Azure_Capacity/QuotaMenuBlade)
+before continuing. GPU quota can be requested later if you want to extend the lab.
+:::
+
+## Step 5 — Confirm the organized path
+
+| Step | CPU path | GPU path |
+| --- | --- | --- |
+| Module sequence | Primary path for this workshop | Future optional extension |
+| AKS home region | `westus2` | Must be revalidated for extension and GPU quota |
+| Flex region | `westus3` | Must be revalidated for GPU host quota |
+| Proof workload | CPU-only Ray proof | GPU-enabled proof after the CPU gate passes |
+
+Record the organized path in `.env`:
+
+```bash
+TF_VAR_azure_location="westus2"
+TF_VAR_region_short="wus2"
+TF_VAR_flex_region="westus3"
+TF_VAR_flex_region_short="wus3"
 TF_VAR_gpu_pool_configs='{"T4":{"name":"gput4","vm_size":"Standard_NC16as_T4_v3","product_name":"NVIDIA-T4","gpu_count":"1","min_count":0,"max_count":2,"availability_zones":[]}}'
 ```
+
+:::note Gate 0: no proof runs yet
+Do not run the Anyscale proof until Modules 2 through 5 complete their gates. The
+proof assumes the Flex node is Ready, the Flex-only kube-proxy is Ready, normal
+ClusterFirst DNS works from Flex pods, and Anyscale Gateway API reconciliation is healthy.
+:::
 
 ## Environment check report
 

@@ -1,3 +1,14 @@
+terraform {
+  required_providers {
+    azapi = {
+      source = "azure/azapi"
+    }
+    time = {
+      source = "hashicorp/time"
+    }
+  }
+}
+
 resource "azurerm_user_assigned_identity" "aks_control_plane" {
   name                = "id-${var.cluster_name}-cp"
   resource_group_name = var.resource_group_name
@@ -6,6 +17,13 @@ resource "azurerm_user_assigned_identity" "aks_control_plane" {
 }
 
 data "azurerm_client_config" "current" {}
+
+locals {
+  app_routing_istio_gateway_class            = "approuting-istio"
+  app_routing_istio_enabled                  = true
+  managed_gateway_api_installation           = "Standard"
+  app_routing_istio_managed_cluster_api_type = "Microsoft.ContainerService/managedClusters@2026-03-02-preview"
+}
 
 resource "azurerm_kubernetes_cluster" "this" {
   name                = var.cluster_name
@@ -75,13 +93,108 @@ resource "azurerm_kubernetes_cluster" "this" {
     msi_auth_for_monitoring_enabled = true
   }
 
+  timeouts {
+    create = "20m"
+    update = "20m"
+    delete = "20m"
+  }
+
   lifecycle {
     ignore_changes = [
       default_node_pool[0].upgrade_settings,
       kubernetes_version,
       microsoft_defender,
+      web_app_routing,
     ]
   }
+}
+
+resource "time_sleep" "app_routing_istio_reconcile_wait" {
+  create_duration = "600s"
+
+  triggers = {
+    cluster_id   = azurerm_kubernetes_cluster.this.id
+    cpu_pool_id  = azurerm_kubernetes_cluster_node_pool.cpu.id
+    gpu_pools    = length(values(azurerm_kubernetes_cluster_node_pool.gpu)) > 0 ? "present" : "none"
+    gpu_pool_ids = length(values(azurerm_kubernetes_cluster_node_pool.gpu)) > 0 ? "present" : "none"
+  }
+
+  depends_on = [
+    azurerm_kubernetes_cluster.this,
+    azurerm_kubernetes_cluster_node_pool.cpu,
+    azurerm_kubernetes_cluster_node_pool.gpu,
+  ]
+}
+
+resource "azapi_update_resource" "app_routing_istio" {
+  type        = local.app_routing_istio_managed_cluster_api_type
+  resource_id = azurerm_kubernetes_cluster.this.id
+
+  body = {
+    properties = {
+      ingressProfile = {
+        gatewayAPI = {
+          installation = local.managed_gateway_api_installation
+        }
+        webAppRouting = {
+          enabled = local.app_routing_istio_enabled
+          nginx = {
+            defaultIngressControllerType = "None"
+          }
+          gatewayAPIImplementations = {
+            appRoutingIstio = {
+              mode = "Enabled"
+            }
+          }
+        }
+      }
+    }
+  }
+
+  # This preview profile update can be slow on managed clusters; allow enough
+  # time so Terraform waits for terminal state instead of failing mid-reconcile.
+  timeouts {
+    create = "1h"
+    update = "1h"
+  }
+
+  depends_on = [
+    time_sleep.app_routing_istio_reconcile_wait,
+  ]
+}
+
+# CRITICAL: Validate cluster reached "Succeeded" provisioning state
+# Prevents false-positive terraform success when Azure provisioning fails
+resource "null_resource" "aks_provisioning_validation" {
+  provisioner "local-exec" {
+    command = <<-EOT
+      MAX_ATTEMPTS=60
+      ATTEMPT=0
+      while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+        STATE=$(az aks show \
+          --resource-group ${azurerm_kubernetes_cluster.this.resource_group_name} \
+          --name ${azurerm_kubernetes_cluster.this.name} \
+          --query provisioningState -o tsv 2>/dev/null)
+        if [ "$STATE" = "Succeeded" ]; then
+          echo "✅ AKS cluster provisioning SUCCEEDED"
+          exit 0
+        elif [ "$STATE" = "Failed" ]; then
+          echo "❌ AKS cluster provisioning FAILED"
+          exit 1
+        fi
+        echo "Provisioning state: $STATE (attempt $((ATTEMPT+1))/$MAX_ATTEMPTS)..."
+        sleep 10
+        ATTEMPT=$((ATTEMPT+1))
+      done
+      echo "❌ Provisioning did not reach Succeeded state within 10 minutes"
+      exit 1
+    EOT
+  }
+
+  depends_on = [
+    azurerm_kubernetes_cluster.this,
+    azapi_update_resource.app_routing_istio,
+  ]
 }
 
 resource "azurerm_kubernetes_cluster_node_pool" "cpu" {
@@ -94,7 +207,7 @@ resource "azurerm_kubernetes_cluster_node_pool" "cpu" {
   zones                 = var.availability_zones
 
   auto_scaling_enabled = true
-  min_count            = 0
+  min_count            = 1
   max_count            = 4
 
   tags = var.tags
@@ -144,6 +257,15 @@ locals {
   ci_config_dce_name_full              = "MSCI-config-${var.location}-${var.cluster_name}"
   ci_config_dce_name_trimmed           = substr(local.ci_config_dce_name_full, 0, 43)
   ci_config_dce_name                   = endswith(local.ci_config_dce_name_trimmed, "-") ? substr(local.ci_config_dce_name_trimmed, 0, 42) : local.ci_config_dce_name_trimmed
+  ci_namespace_filtering_enabled       = lower(var.container_insights_namespace_filtering_mode) != "off"
+  ci_data_collection_settings = merge(
+    {
+      interval               = var.container_insights_data_collection_interval
+      namespaceFilteringMode = var.container_insights_namespace_filtering_mode
+      enableContainerLogV2   = var.container_insights_v2_enabled
+    },
+    local.ci_namespace_filtering_enabled ? { namespaces = var.container_insights_namespaces } : {}
+  )
 }
 
 resource "azurerm_monitor_data_collection_endpoint" "container_insights_config" {
@@ -182,10 +304,10 @@ resource "azurerm_monitor_data_collection_rule" "container_insights" {
       extension_name = "ContainerInsights"
       extension_json = jsonencode({
         dataCollectionSettings = {
-          interval               = var.container_insights_data_collection_interval
-          namespaceFilteringMode = var.container_insights_namespace_filtering_mode
-          namespaces             = var.container_insights_namespaces
-          enableContainerLogV2   = var.container_insights_v2_enabled
+          interval               = local.ci_data_collection_settings.interval
+          namespaceFilteringMode = local.ci_data_collection_settings.namespaceFilteringMode
+          enableContainerLogV2   = local.ci_data_collection_settings.enableContainerLogV2
+          namespaces             = try(local.ci_data_collection_settings.namespaces, null)
         }
       })
       name = "ContainerInsightsExtension"

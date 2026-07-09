@@ -2,6 +2,7 @@
 title: "Module 7 — Teardown and Replay"
 description: Remove all lab resources in the correct order, verify nothing is orphaned, and confirm that re-running the teardown command is a clean no-op.
 sidebar_position: 8
+sidebar_label: "Module 7 — Teardown"
 tags:
   - aks
   - terraform
@@ -47,10 +48,22 @@ Ensure no jobs are running before teardown:
 .venv/bin/anyscale job list --status RUNNING
 ```
 
+Expected output:
+
+```text
+No jobs found.
+```
+
 Terminate any active jobs:
 
 ```bash
 .venv/bin/anyscale job terminate --name <job-name>
+```
+
+Expected output:
+
+```text
+Job <job-name> termination requested.
 ```
 
 ## Step 2 — Destroy
@@ -62,12 +75,22 @@ Terminate any active jobs:
 This runs `terraform destroy -auto-approve` with the same variable profile used
 to deploy. Terraform handles the ordering defined by `depends_on` blocks.
 
-Expected duration: **10–20 minutes** (private endpoint deletion is the longest step).
+Expected duration: **10–20 minutes** (AKS cluster deletion is typically the longest step).
+
+Expected output:
+
+```text
+azurerm_kubernetes_cluster_extension.anyscale_operator: Destruction complete
+azapi_resource.anyscale_cloud: Destruction complete
+azurerm_kubernetes_cluster.aks: Destruction complete
+azurerm_resource_group.main: Destruction complete
+Destroy complete! Resources: 62 destroyed.
+```
 
 :::warning Transient Azure errors during destroy
-Azure occasionally returns `AnotherOperationInProgress` for private endpoint and
-DNS zone group deletions. If the first destroy run fails, run it again — it is safe
-to retry and will continue from where it stopped.
+Azure occasionally returns transient control-plane errors such as `AnotherOperationInProgress`.
+If the first destroy run fails, run it again — it is safe to retry and will continue
+from where it stopped.
 :::
 
 ## Step 3 — Verify residual resources
@@ -75,14 +98,34 @@ to retry and will continue from where it stopped.
 After destroy completes:
 
 ```bash
-# Confirm the resource group no longer exists
-az group exists -n rg-flexany-dev-wus3
+# Confirm the baseline is really clean using the hard-gate script
+./scripts/validate-lab-gates.sh teardown
+```
 
-# Confirm Terraform state is empty
+Expected output:
+
+```text
+PASS resource group rg-flexany-dev-wus2 deleted
+PASS terraform state empty
+PASS no Anyscale proof pods remain
+```
+
+If you want to inspect the underlying values directly, derive them from `.env`:
+
+```bash
+source .env
+RG="rg-${TF_VAR_project}-${TF_VAR_environment}-${TF_VAR_region_short}"
+az group exists -n "$RG"
 cd infra/terraform && terraform state list
 ```
 
-Expected: `false` and an empty state list.
+Expected output:
+
+```text
+false
+```
+
+`terraform state list` should print no resources.
 
 ## Step 4 — Idempotency check
 
@@ -94,7 +137,7 @@ Run destroy a second time to confirm it is a no-op:
 
 Expected output ends with:
 
-```
+```text
 Apply complete! Resources: 0 added, 0 changed, 0 destroyed.
 ```
 
@@ -105,9 +148,19 @@ Collect a final evidence bundle before discarding the environment:
 ```bash
 mkdir -p .cache/teardown
 ./scripts/anyscale-aks.sh status 2>/dev/null || echo "destroyed" > .cache/teardown/status.txt
-az group exists -n rg-flexany-dev-wus3 > .cache/teardown/rg-exists.txt
+source .env
+RG="rg-${TF_VAR_project}-${TF_VAR_environment}-${TF_VAR_region_short}"
+az group exists -n "$RG" > .cache/teardown/rg-exists.txt
 cd infra/terraform && terraform state list > ../../.cache/teardown/tf-state.txt 2>/dev/null || echo "empty" > ../../.cache/teardown/tf-state.txt
 echo "teardown complete $(date -u +%Y-%m-%dT%H:%M:%SZ)" > .cache/teardown/summary.txt
+```
+
+Expected output:
+
+```text
+destroyed
+false
+empty
 ```
 
 ## Replaying the lab
@@ -123,6 +176,12 @@ rm -f infra/terraform/terraform.tfstate*
 ./scripts/anyscale-aks.sh apply
 ```
 
+Expected output:
+
+```text
+Plan: 62 to add, 0 to change, 0 to destroy.
+```
+
 The `.env` file is unchanged, so all variable values carry over. Re-applying is
 safe and idempotent — Terraform will create only the resources that do not exist.
 
@@ -130,9 +189,9 @@ safe and idempotent — Terraform will create only the resources that do not exi
 
 You have completed the full lab:
 
-- ✅ Deployed a public AKS cluster in one region with Terraform
-- ✅ Attached a GPU (or CPU) Flex host from another location
-- ✅ Bound Anyscale and defined compute profiles
-- ✅ Ran a distributed AI proof workload across both locations
-- ✅ Produced machine-readable placement evidence
-- ✅ Torn down all resources cleanly and verified idempotency
+- Deployed a public AKS cluster in `westus2` with Terraform
+- Attached a CPU Flex host from `westus3`
+- Bound Azure-native Anyscale through AzAPI, the AKS operator extension, and Gateway API
+- Ran the CPU-only proof workload across both locations
+- Produced machine-readable placement evidence
+- Torn down all resources cleanly and verified idempotency

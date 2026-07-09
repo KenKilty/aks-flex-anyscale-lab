@@ -14,9 +14,16 @@ output "api_server_fqdn" {
   value = azurerm_kubernetes_cluster.this.fqdn
 }
 
+output "kubelet_identity_object_id" {
+  value = azurerm_kubernetes_cluster.this.kubelet_identity[0].object_id
+}
+
 output "cluster_contract" {
   value = {
     private_cluster_enabled            = false
+    app_routing_istio_enabled          = local.app_routing_istio_enabled
+    app_routing_istio_gateway_class    = local.app_routing_istio_gateway_class
+    managed_gateway_api_installation   = local.managed_gateway_api_installation
     network_plugin                     = azurerm_kubernetes_cluster.this.network_profile[0].network_plugin
     network_policy                     = azurerm_kubernetes_cluster.this.network_profile[0].network_policy
     outbound_type                      = azurerm_kubernetes_cluster.this.network_profile[0].outbound_type
@@ -31,4 +38,9 @@ output "cluster_contract" {
     key_vault_secrets_provider_enabled = length(azurerm_kubernetes_cluster.this.key_vault_secrets_provider) > 0
     gpu_pool_availability_zones        = { for key, pool in var.gpu_pool_configs : key => pool.availability_zones }
   }
+}
+
+output "aks_provisioning_validation" {
+  value       = null_resource.aks_provisioning_validation.id
+  description = "Reference to provisioning validation check (prevents downstream resource deployment if cluster fails)"
 }

@@ -33,8 +33,8 @@ output "private_link_validation" {
     ampls_scope_id                    = var.ampls_enabled ? azurerm_monitor_private_link_scope.this[0].id : null
     ampls_ingestion_access_mode       = var.ampls_enabled ? azurerm_monitor_private_link_scope.this[0].ingestion_access_mode : null
     ampls_query_access_mode           = var.ampls_enabled ? azurerm_monitor_private_link_scope.this[0].query_access_mode : null
-    ampls_private_endpoint_subnet_id  = var.ampls_enabled ? azurerm_private_endpoint.ampls[0].subnet_id : null
-    ampls_private_dns_zone_ids        = var.ampls_private_dns_zone_ids
+    ampls_private_endpoint_subnet_id  = null
+    ampls_private_dns_zone_ids        = null
     workspace_scoped_service_resource = var.ampls_enabled ? azurerm_monitor_private_link_scoped_service.workspace[0].linked_resource_id : null
   }
 }

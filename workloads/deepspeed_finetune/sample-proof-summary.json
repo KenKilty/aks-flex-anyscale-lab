@@ -6,29 +6,37 @@
   "synthetic_model": true,
   "timestamp_unix": 1751486400,
   "placement": {
-    "expected_regions": ["westus3", "westus2"],
+    "expected_regions": ["westus2", "westus3"],
     "placement_hint_env": "AKS_NODE_REGION",
-    "observed_region_hint": "westus2",
-    "observed_node_hint": "vm-flex-flexany-dev-wus2",
-    "observed_world_size": 2
+    "observed_region_hint": "westus3",
+    "observed_node_hint": "vm-flex-flexany-dev-wus3",
+    "observed_world_size": 1
   },
   "worker_snapshot": {
     "run_id": "proof-smoke-0001",
     "experiment_name": "aks-flexany-proof-smoke",
     "rank": 0,
-    "world_size": 2,
-    "hostname": "vm-flex-flexany-dev-wus2",
-    "cuda_available": true,
-    "device_name": "NVIDIA T4",
-    "region_hint": "westus2",
-    "node_hint": "vm-flex-flexany-dev-wus2"
+    "world_size": 1,
+    "hostname": "vm-flex-flexany-dev-wus3",
+    "cuda_available": false,
+    "device_name": "cpu",
+    "region_hint": "westus3",
+    "node_hint": "vm-flex-flexany-dev-wus3"
   },
   "metrics": {
     "epoch": 0,
     "loss": 1.2345,
     "num_batches": 4,
     "steps_per_worker": 4,
-    "world_size": 2
+    "world_size": 1
+  },
+  "storage_proof": {
+    "account_name": "stflexanydevwus2",
+    "abfss_uri": "abfss://flexany-dev-blob@stflexanydevwus2.dfs.core.windows.net/anyscale/proofs/proof-smoke-0001/proof-summary.json",
+    "container_name": "flexany-dev-blob",
+    "client_id_present": true,
+    "path": "flexany-dev-blob/anyscale/proofs/proof-smoke-0001/proof-summary.json",
+    "uri": "az://flexany-dev-blob/anyscale/proofs/proof-smoke-0001/proof-summary.json"
   },
   "status": "draft"
 }

@@ -29,14 +29,14 @@ output "dfs_endpoint" {
 }
 
 output "private_mode" {
-  description = "Storage private access settings used by root terraform tests."
+  description = "Storage access settings used by root terraform tests."
   value = {
     storage_account_id              = azurerm_storage_account.this.id
     container_id                    = local.container_id
     container_name                  = azurerm_storage_container.blob.name
     account_replication_type        = azurerm_storage_account.this.account_replication_type
     public_network_access_enabled   = azurerm_storage_account.this.public_network_access_enabled
-    default_network_action          = azurerm_storage_account.this.network_rules[0].default_action
+    default_network_action          = try(azurerm_storage_account.this.network_rules[0].default_action, null)
     https_traffic_only_enabled      = azurerm_storage_account.this.https_traffic_only_enabled
     min_tls_version                 = azurerm_storage_account.this.min_tls_version
     allow_nested_items_to_be_public = azurerm_storage_account.this.allow_nested_items_to_be_public
@@ -44,8 +44,8 @@ output "private_mode" {
     default_to_oauth_authentication = azurerm_storage_account.this.default_to_oauth_authentication
     cors_allowed_origins            = azurerm_storage_account.this.blob_properties[0].cors_rule[0].allowed_origins
     cors_allowed_methods            = azurerm_storage_account.this.blob_properties[0].cors_rule[0].allowed_methods
-    blob_private_endpoint_subnet_id = azurerm_private_endpoint.blob.subnet_id
-    dfs_private_endpoint_subnet_id  = azurerm_private_endpoint.dfs.subnet_id
+    blob_private_endpoint_subnet_id = null
+    dfs_private_endpoint_subnet_id  = null
     diagnostic_settings_enabled     = var.diagnostic_settings_enabled
     diagnostic_setting_targets      = var.diagnostic_settings_enabled ? [azurerm_monitor_diagnostic_setting.storage_account[0].target_resource_id, azurerm_monitor_diagnostic_setting.blob_service[0].target_resource_id] : []
     blob_diagnostic_categories      = ["StorageRead", "StorageWrite", "StorageDelete"]

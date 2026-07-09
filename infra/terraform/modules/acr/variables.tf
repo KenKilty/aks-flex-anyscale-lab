@@ -18,14 +18,6 @@ variable "name" {
   }
 }
 
-variable "pe_subnet_id" {
-  type = string
-}
-
-variable "pe_dns_zone_id" {
-  type = string
-}
-
 variable "zone_redundancy_enabled" {
   type = bool
 }

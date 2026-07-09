@@ -1,29 +1,28 @@
 ---
 title: "Module 5 — Configure Autoscaling Profiles"
-description: Set quota-aware autoscaling bounds for both the home-region AKS node pools and the Flex host, then verify scale-out and scale-in behavior before running the workload proof.
+description: Confirm the CPU scale profile and final Gate 1-4 health checks before running the Anyscale proof.
 sidebar_position: 6
+sidebar_label: "Module 5 — Preflight Gates"
 tags:
   - aks
   - autoscaling
-  - gpu
   - quota
 ---
 
 import Prerequisites from "../../src/components/SharedMarkdown/_prerequisites.mdx";
 
-Before running the workload proof, you need to configure autoscaling bounds that
-respect your regional quota and define the expected scale-out target. This module
-sets those bounds, validates them against your quota snapshot from Module 1, and
-triggers a controlled scale event to confirm the AKS cluster autoscaler is working.
+Before running the workload proof, you need to confirm that the CPU scale profile,
+Flex service routing, Flex DNS, and Anyscale Gateway API path are healthy. This
+module is the final preflight for Gate 5; it does not run the proof workload.
 
 ## Objectives
 
 By the end of this module you will be able to:
 
-- Set quota-safe autoscaling bounds for GPU and CPU node pools
+- Set quota-safe autoscaling bounds for the CPU node pool
 - Understand the difference between home-region AKS node pool autoscaling and Flex host capacity
-- Trigger and observe a scale-out event
-- Confirm scale-in after the test load is removed
+- Re-run the explicit Flex Ready, kube-proxy-flex, DNS, and Anyscale health checks
+- Confirm the cluster is ready for the CPU-only proof
 
 <Prerequisites />
 
@@ -33,8 +32,8 @@ This lab has two distinct compute locations:
 
 | Location | Managed by | Scales how |
 | ---------- | ----------- | ------------ |
-| Home-region AKS GPU pool (`gput4`) | AKS cluster autoscaler | Adds nodes from Azure capacity on demand |
-| Flex host in `westus2` | Pre-provisioned in Module 3 | Fixed capacity — always `Ready` |
+| Home-region AKS CPU pool (`cpu`) | AKS cluster autoscaler | Adds nodes from Azure capacity on demand |
+| Flex host in `westus3` | Pre-provisioned in Module 3 | Fixed capacity — always `Ready` |
 
 The Flex host does **not** autoscale in this lab. It is pre-provisioned and permanently
 joined. Anyscale can place workers on it immediately without waiting for a scale event.
@@ -43,35 +42,46 @@ joined. Anyscale can place workers on it immediately without waiting for a scale
 
 ```bash
 az aks nodepool list \
-  --resource-group rg-flexany-dev-wus3 \
-  --cluster-name aks-flexany-dev-wus3 \
+  --resource-group rg-flexany-dev-wus2 \
+  --cluster-name aks-flexany-dev-wus2 \
   -o table
 ```
 
-You should see:
+Expected output:
 
-- `sys` — system pool, always running, 1–3 nodes
-- `cpu` — user pool, 0–4 nodes, scales on demand
-- `gput4` — GPU pool, 0–2 nodes (or 0–0 if you are on the CPU path)
-
-## Step 2 — Set quota-aware bounds in `.env`
-
-### GPU path
-
-```bash
-# One warm GPU node keeps the first proof fast; set to 0 for pure cold-start testing
-TF_VAR_gpu_pool_configs='{"T4":{"name":"gput4","vm_size":"Standard_NC16as_T4_v3","product_name":"NVIDIA-T4","gpu_count":"1","min_count":1,"max_count":2,"availability_zones":[]}}'
+```text
+Name    OsType    VmSize                 Count    MinCount    MaxCount    Mode
+------  --------  ---------------------  -------  ----------  ----------  ------
+sys     Linux     Standard_D4s_v5         1        1           3           System
+cpu     Linux     Standard_D4s_v5         0        0           4           User
+gput4   Linux     Standard_NC16as_T4_v3   0        0           0           User
 ```
 
-Ensure `max_count * 16 vCPU ≤ your NCASv3_T4 quota in westus3`.
+## Step 2 — Set quota-aware bounds in `.env`
 
 ### CPU path
 
 ```bash
+TF_VAR_cpu_pool_min_count="0"
+TF_VAR_cpu_pool_max_count="4"
 TF_VAR_gpu_pool_configs='{"T4":{"name":"gput4","vm_size":"Standard_NC16as_T4_v3","product_name":"NVIDIA-T4","gpu_count":"1","min_count":0,"max_count":0,"availability_zones":[]}}'
 ```
 
-Setting `max_count=0` prevents the autoscaler from ever trying to provision GPU nodes.
+Expected output after saving `.env` and checking the values:
+
+```text
+TF_VAR_cpu_pool_min_count="0"
+TF_VAR_cpu_pool_max_count="4"
+TF_VAR_gpu_pool_configs='{"T4":{"name":"gput4","vm_size":"Standard_NC16as_T4_v3","product_name":"NVIDIA-T4","gpu_count":"1","min_count":0,"max_count":0,"availability_zones":[]}}'
+```
+
+### Optional future GPU path
+
+```bash
+TF_VAR_gpu_pool_configs='{"T4":{"name":"gput4","vm_size":"Standard_NC16as_T4_v3","product_name":"NVIDIA-T4","gpu_count":"1","min_count":1,"max_count":2,"availability_zones":[]}}'
+```
+
+Only enable this after the CPU proof succeeds and you have confirmed T4 quota.
 
 ## Step 3 — Apply the profile
 
@@ -81,71 +91,102 @@ Setting `max_count=0` prevents the autoscaler from ever trying to provision GPU 
 
 This updates the node pool `min_count`/`max_count` without replacing nodes.
 
-## Step 4 — Trigger a controlled scale event
-
-Deploy a test workload that requests a GPU:
-
-```bash
-kubectl apply -f - <<'EOF'
-apiVersion: v1
-kind: Pod
-metadata:
-  name: scale-trigger-test
-  namespace: default
-spec:
-  restartPolicy: Never
-  tolerations:
-    - key: "nvidia.com/gpu"
-      operator: "Exists"
-      effect: "NoSchedule"
-    - key: "node.anyscale.com/accelerator-type"
-      operator: "Exists"
-      effect: "NoSchedule"
-    - key: "node.anyscale.com/capacity-type"
-      operator: "Exists"
-      effect: "NoSchedule"
-  containers:
-    - name: test
-      image: ubuntu:22.04
-      command: ["sleep", "120"]
-      resources:
-        limits:
-          nvidia.com/gpu: "1"
-EOF
-```
-
-Watch the cluster autoscaler add a node:
-
-```bash
-kubectl get nodes -w
-```
-
-Expected output (example):
+Expected output:
 
 ```text
-NAME                                     STATUS   ROLES   AGE   VERSION
-aks-gpu-home-39848752-vmss000000         Ready    agent   15m   v1.31.1
-aks-gpu-home-39848752-vmss000001         Ready    agent    4m   v1.31.1
+Apply complete! Resources: 0 added, 1 changed, 0 destroyed.
 ```
 
-You should see a second GPU node appear within **2–5 minutes** after the pod becomes `Pending`.
-
-:::tip CPU path
-For the CPU path, remove the `nvidia.com/gpu` resource limit and the GPU tolerations.
-The CPU pool will scale instead.
-:::
-
-## Step 5 — Confirm scale-in
-
-Delete the test pod and observe the autoscaler remove the node after the
-scale-down cooldown (default: 10 minutes):
+## Step 4 — Re-run Flex and service-routing gates
 
 ```bash
-kubectl delete pod scale-trigger-test
-kubectl get nodes -w
+source .env
+FLEX_NODE="vm-flex-${TF_VAR_project}-${TF_VAR_environment}-${TF_VAR_flex_region_short}"
+kubectl get node "$FLEX_NODE" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}{"\n"}'
+kubectl -n kube-system rollout status ds/kube-proxy-flex --timeout=3m
+kubectl get pods -A -o wide --field-selector spec.nodeName="$FLEX_NODE"
 ```
 
-The GPU node should return to `min_count` after the cooldown.
+Expected output:
+
+```text
+True
+daemon set "kube-proxy-flex" successfully rolled out
+NAMESPACE     NAME                    READY   STATUS    NODE
+kube-system   kube-proxy-flex-abcde   1/1     Running   vm-flex-flexany-dev-wus3
+```
+
+## Step 5 — Re-run ClusterFirst DNS diagnostic
+
+```bash
+kubectl run dns-flex-debug \
+  --restart=Never \
+  --image=busybox:1.36 \
+  --overrides='{"apiVersion":"v1","spec":{"nodeSelector":{"agentpool":"aksflexnodes"},"tolerations":[{"key":"aks-flex-node","operator":"Equal","value":"true","effect":"NoSchedule"}],"containers":[{"name":"dns-flex-debug","image":"busybox:1.36","command":["sh","-c","cat /etc/resolv.conf; nslookup console.azure.anyscale.com; nslookup kubernetes.default.svc.cluster.local; sleep 5"]}]}}'
+kubectl wait --for=condition=Ready pod/dns-flex-debug --timeout=180s
+kubectl logs dns-flex-debug --tail=120
+kubectl delete pod dns-flex-debug --ignore-not-found
+```
+
+Expected output:
+
+```text
+pod/dns-flex-debug condition met
+nameserver 10.0.0.10
+Name:      console.azure.anyscale.com
+Address 1: 20.42.10.25
+Name:      kubernetes.default.svc.cluster.local
+Address 1: 10.0.0.1
+pod "dns-flex-debug" deleted
+```
+
+## Step 6 — Confirm Anyscale extension and Gateway health
+
+```bash
+az k8s-extension show \
+  --cluster-name aks-flexany-dev-wus2 \
+  --resource-group rg-flexany-dev-wus2 \
+  --cluster-type managedClusters \
+  --name anyscale-operator \
+  --query '{name:name,provisioningState:provisioningState,currentVersion:currentVersion}' -o json
+
+kubectl get pods,gateway -n anyscale-operator -o wide
+kubectl get gateway anyscale-gateway -n anyscale-operator -o jsonpath='{.status.conditions}'
+```
+
+Expected output:
+
+```text
+{
+  "name": "anyscale-operator",
+  "provisioningState": "Succeeded",
+  "currentVersion": "1.7.1"
+}
+
+pod/anyscale-operator-556c4df7cb-tq4r7   3/3   Running
+gateway.gateway.networking.k8s.io/anyscale-gateway   approuting-istio   20.190.18.76   True
+
+[{"type":"Programmed","status":"True","reason":"Programmed"}]
+```
+
+:::warning Stop before Gate 5
+Do not start proof loops if any check above fails. Gate 5 assumes Flex pod IP
+capacity, Flex-only service routing, ClusterFirst DNS, and Anyscale Gateway API are
+already healthy.
+:::
+
+## Step 7 — Confirm no stale proof pods are active
+
+```bash
+kubectl get pods -A -o wide --field-selector spec.nodeName="$FLEX_NODE"
+```
+
+Expected output:
+
+```text
+NAMESPACE     NAME                    READY   STATUS    NODE
+kube-system   kube-proxy-flex-abcde   1/1     Running   vm-flex-flexany-dev-wus3
+```
 
 ## Scale profile summary
 
@@ -153,6 +194,21 @@ Before proceeding, confirm your scale profile matches your quota:
 
 ```bash
 ./scripts/anyscale-aks.sh status | jq '.flex_join_contract, .foundation_contract.aks_contract'
+```
+
+Expected output:
+
+```json
+{
+  "enabled": true,
+  "region": "westus3",
+  "vm_name": "vm-flex-flexany-dev-wus3"
+}
+{
+  "cluster_name": "aks-flexany-dev-wus2",
+  "location": "westus2",
+  "public_aks": true
+}
 ```
 
 ## Next step

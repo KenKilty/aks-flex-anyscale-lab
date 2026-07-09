@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 500" role="img" aria-labelledby="t1 d1">
   <title id="t1">What You Are Building: One AKS Cluster Spanning Two Locations</title>
-  <desc id="d1">Diagram showing the topology of an AKS cluster in westus3 connected via AKS Flex Node to a GPU host in westus2. Both locations form one Kubernetes cluster managed by Anyscale.</desc>
+  <desc id="d1">Diagram showing the topology of an AKS cluster in westus2 connected via AKS Flex Node to a CPU host in westus3. Both locations form one Kubernetes cluster managed by Anyscale.</desc>
   <defs>
     <marker id="arr-orange" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L10,4 L0,8 z" fill="#ea580c"/></marker>
     <marker id="arr-green" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L10,4 L0,8 z" fill="#16a34a"/></marker>
@@ -10,7 +10,7 @@
   <text x="550" y="40" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="22" font-weight="700" fill="#0f172a">What You Are Building: One AKS Cluster Spanning Two Locations</text>
   <!-- HOME REGION -->
   <rect x="40" y="62" width="430" height="360" rx="12" fill="#eff6ff" stroke="#3b82f6" stroke-width="2"/>
-  <text x="255" y="94" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="17" font-weight="700" fill="#1d4ed8">Home Region — westus3</text>
+  <text x="255" y="94" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="17" font-weight="700" fill="#1d4ed8">Home Region — westus2</text>
   <rect x="64" y="108" width="382" height="190" rx="8" fill="#dbeafe" stroke="#93c5fd" stroke-width="1.5"/>
   <text x="255" y="134" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="15" font-weight="700" fill="#1e40af">AKS Cluster (Kubernetes control plane here)</text>
   <rect x="80" y="148" width="104" height="72" rx="6" fill="white" stroke="#93c5fd" stroke-width="1"/>
@@ -20,9 +20,9 @@
   <text x="252" y="176" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="14" font-weight="600" fill="#1e3a5f">CPU Pool</text>
   <text x="252" y="197" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="12" fill="#475569">Ray head</text>
   <rect x="320" y="148" width="112" height="72" rx="6" fill="#ccfbf1" stroke="#2dd4bf" stroke-width="1.5"/>
-  <text x="376" y="173" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="14" font-weight="700" fill="#0f766e">GPU Pool</text>
-  <text x="376" y="193" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="13" font-weight="600" fill="#0f766e">2 × T4</text>
-  <text x="376" y="210" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="11" fill="#047857">32 vCPU</text>
+  <text x="376" y="173" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="14" font-weight="700" fill="#0f766e">User Pool</text>
+  <text x="376" y="193" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="13" font-weight="600" fill="#0f766e">CPU workers</text>
+  <text x="376" y="210" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="11" fill="#047857">optional GPU</text>
   <rect x="64" y="316" width="382" height="88" rx="8" fill="#eef2ff" stroke="#a5b4fc" stroke-width="1.5"/>
   <text x="255" y="344" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="15" font-weight="700" fill="#3730a3">Anyscale Operator (cloud binding here)</text>
   <text x="255" y="366" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="13" fill="#4338ca">AKS marketplace extension · OIDC workload identity</text>
@@ -36,14 +36,14 @@
   <text x="550" y="206" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="10" fill="#16a34a">← kubelet registered</text>
   <!-- FLEX LOCATION -->
   <rect x="630" y="62" width="430" height="360" rx="12" fill="#fff7ed" stroke="#f97316" stroke-width="2"/>
-  <text x="845" y="88" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="15" font-weight="700" fill="#c2410c">Flex Location — westus2, on-prem, or other cloud</text>
+  <text x="845" y="88" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="15" font-weight="700" fill="#c2410c">Flex Location — westus3, on-prem, or other cloud</text>
   <rect x="654" y="102" width="382" height="300" rx="8" fill="#ffedd5" stroke="#fb923c" stroke-width="1.5"/>
   <text x="845" y="128" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="15" font-weight="700" fill="#9a3412">Linux VM or Bare Metal Host</text>
   <rect x="670" y="144" width="168" height="110" rx="6" fill="white" stroke="#94a3b8" stroke-width="1"/>
-  <text x="754" y="170" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="14" font-weight="600" fill="#0f766e">GPU Hardware</text>
-  <text x="754" y="192" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="13" fill="#334155">NC16as_T4_v3</text>
-  <text x="754" y="212" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="13" font-weight="600" fill="#0f766e">1 × NVIDIA T4</text>
-  <text x="754" y="232" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="11" fill="#64748b">Driver pre-baked</text>
+  <text x="754" y="170" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="14" font-weight="600" fill="#0f766e">CPU Host</text>
+  <text x="754" y="192" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="13" fill="#334155">Standard_D4s_v5</text>
+  <text x="754" y="212" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="13" font-weight="600" fill="#0f766e">4 vCPU baseline</text>
+  <text x="754" y="232" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="11" fill="#64748b">Ubuntu 22.04</text>
   <rect x="856" y="144" width="168" height="110" rx="6" fill="white" stroke="#94a3b8" stroke-width="1"/>
   <text x="940" y="170" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="14" font-weight="600" fill="#334155">aks-flex-node agent</text>
   <text x="940" y="194" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="13" fill="#475569">Installs kubelet</text>
@@ -57,5 +57,5 @@
   <!-- Bottom message -->
   <rect x="40" y="438" width="1020" height="50" rx="8" fill="#0f172a"/>
   <text x="550" y="459" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="15" font-weight="700" fill="white">Anyscale sees ONE cluster capacity graph. AKS Flex Node extends it to any location.</text>
-  <text x="550" y="479" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="13" fill="#94a3b8">Swap "westus2" for your on-premises network — the AKS Flex Node join steps are identical.</text>
+  <text x="550" y="479" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="13" fill="#94a3b8">Swap "westus3" for your on-premises network — the AKS Flex Node join steps are identical.</text>
 </svg>

@@ -42,6 +42,14 @@ output "flex_host_private_ip" {
   value = var.flex_host_enabled ? module.flex_host[0].private_ip_address : null
 }
 
+output "flex_host_network_interface_id" {
+  value = var.flex_host_enabled ? module.flex_host[0].network_interface_id : null
+}
+
+output "flex_host_ip_configurations" {
+  value = var.flex_host_enabled ? module.flex_host[0].ip_configurations : []
+}
+
 output "flex_host_public_ip" {
   value = var.flex_host_enabled ? module.flex_host[0].public_ip_address : null
 }
@@ -84,7 +92,7 @@ output "foundation_contract" {
     flex_vnet            = azurerm_virtual_network.flex.name
     flex_peering_enabled = true
     flex_host_enabled    = var.flex_host_enabled
-    private_endpoints    = true
+    private_endpoints    = false
     ampls_enabled        = var.ampls_enabled
     storage_private_mode = module.storage.private_mode
     acr_private_mode     = module.acr.private_mode
@@ -101,5 +109,6 @@ output "flex_join_contract" {
     vm_name           = var.flex_host_enabled ? module.flex_host[0].vm_name : null
     public_ip         = var.flex_host_enabled ? module.flex_host[0].public_ip_address : null
     private_ip        = var.flex_host_enabled ? module.flex_host[0].private_ip_address : null
+    nic_id            = var.flex_host_enabled ? module.flex_host[0].network_interface_id : null
   }
 }

@@ -11,10 +11,8 @@ variable "subnet_cidrs" {
   type = object({
     firewall          = string
     bastion           = string
-    aks_apiserver     = string
     dns_resolver_in   = string
     dns_resolver_out  = string
-    private_endpoints = string
     aks_nodes         = string
     jump_host         = optional(string)
     browser_jump_host = optional(string)
@@ -24,10 +22,8 @@ variable "subnet_cidrs" {
 variable "subnet_names" {
   type = object({
     aks_nodes         = string
-    aks_apiserver     = string
     dns_resolver_in   = string
     dns_resolver_out  = string
-    private_endpoints = string
     firewall          = string
     bastion           = string
     jump_host         = optional(string, "snet-jump-host")
@@ -36,7 +32,6 @@ variable "subnet_names" {
 }
 
 variable "nsg_aks_nodes_name" { type = string }
-variable "nsg_pe_name" { type = string }
 variable "nsg_jump_host_name" {
   type    = string
   default = "nsg-jump-host"

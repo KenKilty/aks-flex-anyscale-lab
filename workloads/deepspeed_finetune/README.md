@@ -1,31 +1,36 @@
 # Deepspeed Fine-Tune Proof Workload
 
-This directory holds the first representative workload adaptation for WP-06.
-It is based on the Anyscale `deepspeed_finetune` template, but it is adjusted
-for this sample in three ways:
+This directory contains the representative Ray Train + DeepSpeed proof workload
+for the lab. It is adapted for this sample in three ways:
 
 1. It defaults to synthetic inputs so runs are repeatable and do not depend on
    external downloads.
-2. It writes a machine-readable proof summary to `./evidence/proof-summary.json`.
-3. It exposes profile knobs for smoke and full runs so we can separate local
-   validation from GPU saturation proofs.
+2. It emits a machine-readable proof summary in job logs and, when storage
+   environment variables are provided, writes the same summary through managed
+   identity to `az://` storage.
+3. It exposes smoke/full profile knobs so the same script can support quick CPU
+   validation and larger optional GPU runs.
 
 ## Files
 
 - `train.py`: Ray Train + DeepSpeed workload entrypoint.
 - `proof-schema.json`: schema for the generated proof summary.
-- `adaptation-notes.md`: concise notes on how this differs from upstream.
+- `adaptation-notes.md`: implementation notes for the workload.
 
-## Current usage intent
+## Usage
 
-The script is meant to run inside the Anyscale-bound AKS cluster once the cloud
-binding and compute profile are in place. For a quick local syntax check, run:
+Run a local CPU smoke check:
 
 ```bash
-python3 -m py_compile workloads/deepspeed_finetune/train.py
+./scripts/run-workload-smoke.sh
 ```
 
-The emitted proof summary is intentionally conservative at this stage. It
-captures world size, worker identity, region hints, and training metrics so the
-later evidence bundle can prove placement and saturation without manual log
-inspection.
+Submit the CPU proof through Anyscale after completing the operator and compute
+configuration modules:
+
+```bash
+./scripts/run-anyscale-proof.sh --mode cpu
+```
+
+See [Module 6](../../docs/ai-workloads-on-aks/module-06-workload-proof.mdx) for
+the full proof workflow.

@@ -3,7 +3,7 @@
   "$id": "https://example.invalid/aks-flex/workloads/deepspeed_finetune/proof-schema.json",
   "title": "AKS Flex deepspeed_finetune proof summary",
   "type": "object",
-  "required": ["run_id", "experiment_name", "placement", "worker_snapshot", "metrics", "status"],
+  "required": ["run_id", "experiment_name", "placement", "worker_snapshot", "metrics", "storage_proof", "status"],
   "properties": {
     "run_id": {
       "type": "string"
@@ -108,6 +108,32 @@
         }
       },
       "additionalProperties": true
+    },
+    "storage_proof": {
+      "type": "object",
+      "required": ["account_name", "container_name", "client_id_present", "path", "uri"],
+      "properties": {
+        "account_name": {
+          "type": "string"
+        },
+        "abfss_uri": {
+          "type": "string"
+        },
+        "container_name": {
+          "type": "string"
+        },
+        "client_id_present": {
+          "type": "boolean"
+        },
+        "path": {
+          "type": "string"
+        },
+        "uri": {
+          "type": "string",
+          "pattern": "^az://"
+        }
+      },
+      "additionalProperties": false
     },
     "status": {
       "type": "string",

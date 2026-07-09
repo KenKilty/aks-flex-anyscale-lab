@@ -10,13 +10,11 @@ variables {
 
   vnet_address_space = ["10.50.0.0/16"]
   subnet_cidrs = {
-    firewall          = "10.50.0.0/26"
-    bastion           = "10.50.0.128/26"
-    aks_apiserver     = "10.50.1.0/28"
-    dns_resolver_in   = "10.50.1.16/28"
-    dns_resolver_out  = "10.50.1.32/28"
-    private_endpoints = "10.50.2.0/24"
-    aks_nodes         = "10.50.4.0/22"
+    firewall         = "10.50.0.0/26"
+    bastion          = "10.50.0.128/26"
+    dns_resolver_in  = "10.50.1.16/28"
+    dns_resolver_out = "10.50.1.32/28"
+    aks_nodes        = "10.50.4.0/22"
   }
   flex_vnet_address_space = ["10.60.0.0/16"]
   flex_subnet_cidr        = "10.60.1.0/24"
@@ -59,10 +57,10 @@ variables {
   storage_replication_type                      = "ZRS"
   acr_zone_redundancy_enabled                   = true
   log_analytics_retention_days                  = 30
-  log_analytics_internet_ingestion_enabled      = false
+  log_analytics_internet_ingestion_enabled      = true
   log_analytics_internet_query_enabled          = true
-  ampls_enabled                                 = true
-  ampls_ingestion_access_mode                   = "PrivateOnly"
+  ampls_enabled                                 = false
+  ampls_ingestion_access_mode                   = "Open"
   ampls_query_access_mode                       = "Open"
   container_insights_v2_enabled                 = true
   container_insights_streams                    = ["Microsoft-ContainerLogV2", "Microsoft-KubeEvents", "Microsoft-KubePodInventory"]
@@ -106,7 +104,7 @@ run "foundation_plan_contract" {
   }
 
   assert {
-    condition     = output.foundation_contract.storage_private_mode.public_network_access_enabled == false && output.foundation_contract.acr_private_mode.public_network_access_enabled == false
-    error_message = "Storage and ACR must remain private-endpoint backed."
+    condition     = output.foundation_contract.storage_private_mode.public_network_access_enabled == true && output.foundation_contract.acr_private_mode.public_network_access_enabled == true
+    error_message = "Storage and ACR must be public-network enabled for this lab scenario."
   }
 }

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 400" role="img" aria-labelledby="t2 d2">
   <title id="t2">How Anyscale Dispatches a Ray Job Across Both Locations</title>
-  <desc id="d2">Five-step numbered flow showing how a submitted Ray training job is dispatched by Anyscale across the home AKS cluster in westus3 and the Flex Node GPU workers in westus2.</desc>
+  <desc id="d2">Five-step numbered flow showing how a submitted Ray training job is dispatched by Anyscale across the home AKS cluster in westus2 and the Flex Node workers in westus3.</desc>
   <defs>
     <marker id="arr" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L10,4 L0,8 z" fill="#334155"/></marker>
   </defs>
@@ -27,10 +27,10 @@
   <text x="332" y="136" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="15" font-weight="700" fill="#075985">Schedule</text>
   <text x="332" y="162" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="13" fill="#334155">Anyscale queries</text>
   <text x="332" y="180" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="13" fill="#334155">one AKS cluster</text>
-  <text x="332" y="198" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="13" fill="#334155">for available GPU</text>
+  <text x="332" y="198" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="13" fill="#334155">for available</text>
   <text x="332" y="216" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="13" fill="#334155">capacity</text>
-  <text x="332" y="264" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="11" fill="#0369a1">Sees westus3 GPUs</text>
-  <text x="332" y="280" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="11" fill="#0369a1">+ westus2 Flex GPUs</text>
+  <text x="332" y="264" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="11" fill="#0369a1">Sees westus2 AKS</text>
+  <text x="332" y="280" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="11" fill="#0369a1">+ westus3 Flex nodes</text>
   <!-- Arrow 2-3 -->
   <path d="M 420 184 L 456 184" fill="none" stroke="#334155" stroke-width="2.5" marker-end="url(#arr)"/>
   <!-- Step 3 -->
@@ -40,7 +40,7 @@
   <text x="544" y="136" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="15" font-weight="700" fill="#166534">Place Workers</text>
   <text x="544" y="162" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="13" fill="#334155">Kubernetes places</text>
   <text x="544" y="180" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="13" fill="#334155">Ray worker pods</text>
-  <text x="544" y="198" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="13" fill="#334155">on GPU nodes in</text>
+  <text x="544" y="198" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="13" fill="#334155">on nodes in</text>
   <text x="544" y="216" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="13" fill="#334155">both locations</text>
   <text x="544" y="264" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="11" fill="#15803d">No code change</text>
   <text x="544" y="280" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="11" fill="#15803d">needed in your job</text>
@@ -50,11 +50,11 @@
   <rect x="668" y="74" width="176" height="220" rx="10" fill="#fff7ed" stroke="#fb923c" stroke-width="1.5"/>
   <circle cx="756" cy="100" r="18" fill="#ea580c"/>
   <text x="756" y="107" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="17" font-weight="700" fill="white">4</text>
-  <text x="756" y="136" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="15" font-weight="700" fill="#9a3412">Train on GPUs</text>
+  <text x="756" y="136" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="15" font-weight="700" fill="#9a3412">Run Training</text>
   <text x="756" y="162" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="13" fill="#334155">Ray workers run</text>
-  <text x="756" y="180" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="13" fill="#334155">DeepSpeed on T4s</text>
-  <text x="756" y="198" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="14" font-weight="600" fill="#0f766e">in westus3</text>
-  <text x="756" y="218" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="14" font-weight="600" fill="#ea580c">and westus2</text>
+  <text x="756" y="180" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="13" fill="#334155">DeepSpeed workers</text>
+  <text x="756" y="198" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="14" font-weight="600" fill="#0f766e">in westus2</text>
+  <text x="756" y="218" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="14" font-weight="600" fill="#ea580c">and westus3</text>
   <text x="756" y="264" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="11" fill="#9a3412">Ray communicates</text>
   <text x="756" y="280" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="11" fill="#9a3412">over pod network</text>
   <!-- Arrow 4-5 -->
@@ -66,12 +66,12 @@
   <text x="974" y="136" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="15" font-weight="700" fill="#86198f">Proof Evidence</text>
   <text x="974" y="162" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="13" fill="#334155">Each worker logs</text>
   <text x="974" y="180" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="13" fill="#334155">hostname, region,</text>
-  <text x="974" y="198" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="13" fill="#334155">GPU, and loss to</text>
+  <text x="974" y="198" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="13" fill="#334155">device, and loss to</text>
   <text x="974" y="216" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="13" fill="#334155">proof-summary.json</text>
   <text x="974" y="264" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="11" fill="#a21caf">Machine-readable</text>
   <text x="974" y="280" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="11" fill="#86198f">pass / fail output</text>
   <!-- Bottom message -->
   <rect x="32" y="314" width="1036" height="50" rx="8" fill="#0f172a"/>
-  <text x="550" y="335" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="15" font-weight="700" fill="white">From Anyscale's view there is one cluster — it schedules to whichever GPU nodes are available,</text>
+  <text x="550" y="335" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="15" font-weight="700" fill="white">From Anyscale's view there is one cluster — it schedules to whichever nodes are available,</text>
   <text x="550" y="355" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="13" fill="#94a3b8">whether they are native AKS node pool nodes or Flex Node hosts joined from another location.</text>
 </svg>

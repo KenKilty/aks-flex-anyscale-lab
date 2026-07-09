@@ -9,29 +9,9 @@ resource "azurerm_container_registry" "this" {
   location                      = var.location
   sku                           = "Premium"
   admin_enabled                 = false
-  public_network_access_enabled = false
+  public_network_access_enabled = true
   zone_redundancy_enabled       = var.zone_redundancy_enabled
   tags                          = var.tags
-}
-
-resource "azurerm_private_endpoint" "this" {
-  name                = "pep-${var.name}"
-  resource_group_name = var.resource_group_name
-  location            = var.location
-  subnet_id           = var.pe_subnet_id
-  tags                = var.tags
-
-  private_service_connection {
-    name                           = "psc-${var.name}"
-    private_connection_resource_id = azurerm_container_registry.this.id
-    is_manual_connection           = false
-    subresource_names              = ["registry"]
-  }
-
-  private_dns_zone_group {
-    name                 = "pdz-acr"
-    private_dns_zone_ids = [var.pe_dns_zone_id]
-  }
 }
 
 ###############################################################################

@@ -221,7 +221,7 @@ resource "azurerm_kubernetes_cluster_node_pool" "cpu" {
   zones                 = var.availability_zones
 
   auto_scaling_enabled = true
-  min_count            = 0
+  min_count            = 1
   max_count            = 4
 
   tags = var.tags
@@ -282,6 +282,15 @@ locals {
   ci_config_dce_name_full              = "MSCI-config-${var.location}-${var.cluster_name}"
   ci_config_dce_name_trimmed           = substr(local.ci_config_dce_name_full, 0, 43)
   ci_config_dce_name                   = endswith(local.ci_config_dce_name_trimmed, "-") ? substr(local.ci_config_dce_name_trimmed, 0, 42) : local.ci_config_dce_name_trimmed
+  ci_namespace_filtering_enabled       = lower(var.container_insights_namespace_filtering_mode) != "off"
+  ci_data_collection_settings = merge(
+    {
+      interval               = var.container_insights_data_collection_interval
+      namespaceFilteringMode = var.container_insights_namespace_filtering_mode
+      enableContainerLogV2   = var.container_insights_v2_enabled
+    },
+    local.ci_namespace_filtering_enabled ? { namespaces = var.container_insights_namespaces } : {}
+  )
 }
 
 resource "azurerm_monitor_data_collection_endpoint" "container_insights_config" {
@@ -320,10 +329,10 @@ resource "azurerm_monitor_data_collection_rule" "container_insights" {
       extension_name = "ContainerInsights"
       extension_json = jsonencode({
         dataCollectionSettings = {
-          interval               = var.container_insights_data_collection_interval
-          namespaceFilteringMode = var.container_insights_namespace_filtering_mode
-          namespaces             = var.container_insights_namespaces
-          enableContainerLogV2   = var.container_insights_v2_enabled
+          interval               = local.ci_data_collection_settings.interval
+          namespaceFilteringMode = local.ci_data_collection_settings.namespaceFilteringMode
+          enableContainerLogV2   = local.ci_data_collection_settings.enableContainerLogV2
+          namespaces             = try(local.ci_data_collection_settings.namespaces, null)
         }
       })
       name = "ContainerInsightsExtension"

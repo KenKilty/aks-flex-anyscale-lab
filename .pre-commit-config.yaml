@@ -44,7 +44,7 @@ repos:
 
       - id: terraform-fmt-validate
         name: terraform fmt and validate
-        entry: scripts/lint-terraform.sh
+        entry: terraform -chdir=infra/terraform fmt -check -recursive && terraform -chdir=infra/terraform init -backend=false -input=false -upgrade=false >/dev/null && terraform -chdir=infra/terraform validate
         language: system
         files: ^infra/terraform/.*\.tf$
         pass_filenames: false

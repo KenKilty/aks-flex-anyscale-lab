@@ -1,10 +1,10 @@
-# Contributing to This AKS Labs Candidate
+# Contributing to This Lab
 
-This repository is being prepared to follow the contribution model used by [AKS Labs](https://azure-samples.github.io/aks-labs/contributing/).
+This repository follows the contribution model used by [AKS Labs](https://azure-samples.github.io/aks-labs/contributing/).
 
-## Submission goals
+## Contribution Goals
 
-Changes should move this repo toward an easy upstream fit by keeping the workshop:
+Changes should keep the workshop:
 
 - self-contained,
 - documentation-first,
@@ -48,9 +48,9 @@ Workshop pages should include:
 - accessible image descriptions when screenshots are used, and
 - resource-conscious defaults when paid Azure services are involved.
 
-## Upstream review alignment
+## Review Alignment
 
-Before proposing upstream submission, verify that:
+Before proposing changes, verify that:
 
 - the workshop topic is not already covered in `aks-labs`,
 - the documentation can render cleanly in Docusaurus,

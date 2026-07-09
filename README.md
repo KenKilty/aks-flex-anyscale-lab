@@ -1,23 +1,21 @@
-# AKS Labs Candidate: AKS Flex Node + Anyscale Multi-Region Workload Lab
+# AKS Flex Node + Anyscale Multi-Region Workload Lab
 
-This repository is being shaped to align with the workshop structure used by [Azure-Samples/aks-labs](https://github.com/Azure-Samples/aks-labs).
-
-It contains a hands-on lab and supporting infrastructure for learning how to:
+This repository contains a hands-on lab and supporting infrastructure for learning how to:
 
 - deploy a public AKS foundation,
 - extend cluster capacity across regions with AKS Flex Node,
 - prepare an Anyscale-on-AKS integration path,
-- validate quota-aware GPU scaling behavior, and
+- validate quota-aware CPU scaling behavior, and
 - capture machine-readable evidence for placement, elasticity, and saturation.
 
-## Current focus
+## Workshop Scenario
 
-The workshop scenario is:
+The workshop demonstrates:
 
-- home region AKS cluster in `westus3` as the intended final target,
-- fallback validated deployment in `eastus2` for live bring-up when capacity blocks `westus3`,
-- Flex host expansion in `westus2`, and
-- a representative `deepspeed_finetune` proof workload.
+- home region AKS cluster in `westus2`,
+- Flex host expansion in `westus3`,
+- a CPU-only Anyscale proof across the AKS and Flex nodes, and
+- a representative `deepspeed_finetune` proof workload with managed-identity storage evidence.
 
 ## Repository layout
 
@@ -28,7 +26,7 @@ The workshop scenario is:
 
 ## Development setup
 
-This repo now includes the same style of documentation scaffolding that `aks-labs` uses.
+Install the local tools and dependencies before running the lab or validation checks.
 
 ### Prerequisites
 
@@ -36,7 +34,7 @@ This repo now includes the same style of documentation scaffolding that `aks-lab
 - npm
 - Terraform 1.9+
 - Azure CLI
-- `pre-commit`, `ruff`, `shellcheck`, and `markdownlint-cli2`
+- `pre-commit`, `ruff`, `mypy`, `shellcheck`, `shfmt`, and `markdownlint-cli2`
 
 ### Install docs dependencies
 
@@ -47,7 +45,13 @@ npm install
 ### Run the docs site locally
 
 ```bash
-npm start
+scripts/docs-dev.sh
+```
+
+Validate the production docs build before committing:
+
+```bash
+npm run build
 ```
 
 ### Run repository validation
@@ -56,25 +60,10 @@ npm start
 scripts/lint.sh
 ```
 
-## Submission intent
-
-The goal is to make this workshop easy to upstream into `aks-labs` by matching:
-
-- Docusaurus content structure,
-- workshop naming and frontmatter conventions,
-- self-contained lab guidance, and
-- reusable asset organization under category-local `assets/` folders.
-
 ## Related files
 
 - workshop entrypoint: `docs/ai-workloads-on-aks/aks-flex-anyscale-multi-region.mdx`
 - live deploy helper: `scripts/anyscale-aks.sh`
-
-## Known issues
-
-Issues encountered during lab development are tracked in dedicated public repositories:
-
-- [AKS Flex Node CA Certificate Initialization Issue](https://github.com/KenKilty/aks-flex-node-issue-repro) — CA certificate file not auto-initialized during bootstrap with bootstrap-token auth. Reported to Azure AKS Flex Node engineering team.
 
 ## License
 

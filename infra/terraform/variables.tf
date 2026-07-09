@@ -65,10 +65,8 @@ variable "subnet_cidrs" {
   type = object({
     firewall          = string
     bastion           = string
-    aks_apiserver     = string
     dns_resolver_in   = string
     dns_resolver_out  = string
-    private_endpoints = string
     aks_nodes         = string
     jump_host         = optional(string)
     browser_jump_host = optional(string)
@@ -175,6 +173,30 @@ variable "flex_host_admin_ssh_public_key" {
 variable "flex_host_public_ip_enabled" {
   type    = bool
   default = true
+}
+
+variable "flex_host_secondary_ip_configurations" {
+  type = list(object({
+    name                          = string
+    private_ip_address            = optional(string)
+    private_ip_address_allocation = optional(string, "Dynamic")
+  }))
+  default = []
+
+  validation {
+    condition = alltrue([
+      for config in var.flex_host_secondary_ip_configurations :
+      config.name != "ipconfig" &&
+      contains(["Dynamic", "Static"], config.private_ip_address_allocation) &&
+      (config.private_ip_address_allocation != "Static" || try(length(config.private_ip_address) > 0, false))
+    ])
+    error_message = "flex_host_secondary_ip_configurations must not use name ipconfig, allocation must be Dynamic or Static, and Static configs must include private_ip_address."
+  }
+}
+
+variable "flex_host_user_assigned_identity_ids" {
+  type    = list(string)
+  default = []
 }
 
 variable "flex_host_os_disk_size_gb" {
@@ -284,4 +306,28 @@ variable "anyscale_release_train" {
   description = "Release train for Anyscale operator (Stable or Preview)"
   type        = string
   default     = "Stable"
+}
+
+variable "anyscale_control_plane_url" {
+  description = "Anyscale control plane URL used by the AKS extension (maps to global.controlPlaneURL)"
+  type        = string
+  default     = "https://console.azure.anyscale.com"
+}
+
+variable "anyscale_auth_audience" {
+  description = "Audience used by Anyscale operator Azure auth flow (maps to global.auth.audience)"
+  type        = string
+  default     = "api://086bc555-6989-4362-ba30-fded273e432b/.default"
+}
+
+variable "anyscale_gateway_name" {
+  description = "Gateway API Gateway name used by the Anyscale operator"
+  type        = string
+  default     = "anyscale-gateway"
+}
+
+variable "anyscale_gateway_hostname" {
+  description = "Hostname or address published by the Anyscale Gateway API Gateway"
+  type        = string
+  default     = ""
 }

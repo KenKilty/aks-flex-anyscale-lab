@@ -81,7 +81,9 @@ def log_rank0(message: str) -> None:
 
 
 def get_precision_config() -> dict[str, Any]:
-    if torch.cuda.is_available() and torch.cuda.is_bf16_supported():
+    if not torch.cuda.is_available():
+        return {}
+    if torch.cuda.is_bf16_supported():
         return {"bf16": {"enabled": True}, "grad_accum_dtype": "bf16"}
     return {"fp16": {"enabled": True}}
 
@@ -170,6 +172,43 @@ def save_summary(summary_path: Path, summary: dict[str, Any]) -> None:
         stream.write("\n")
 
 
+def write_storage_proof(summary: dict[str, Any], run_id: str) -> dict[str, Any] | None:
+    account_name = os.environ.get("ANYSCALE_PROOF_STORAGE_ACCOUNT", "").strip()
+    container_name = os.environ.get("ANYSCALE_PROOF_STORAGE_CONTAINER", "").strip()
+    if not account_name or not container_name:
+        return None
+
+    import fsspec
+
+    storage_path = f"{container_name}/anyscale/proofs/{run_id}/proof-summary.json"
+    storage_uri = f"az://{storage_path}"
+    abfss_uri = f"abfss://{container_name}@{account_name}.dfs.core.windows.net/anyscale/proofs/{run_id}/proof-summary.json"
+    storage_proof = {
+        "account_name": account_name,
+        "abfss_uri": abfss_uri,
+        "container_name": container_name,
+        "client_id_present": bool(os.environ.get("AZURE_CLIENT_ID")),
+        "path": storage_path,
+        "uri": storage_uri,
+    }
+    summary["storage_proof"] = storage_proof
+    payload = json.dumps(summary, indent=2, sort_keys=True).encode("utf-8") + b"\n"
+
+    filesystem = fsspec.filesystem("az", account_name=account_name, anon=False)
+    filesystem.makedirs(f"{container_name}/anyscale/proofs/{run_id}", exist_ok=True)
+    with filesystem.open(storage_path, "wb") as stream:
+        stream.write(payload)
+    with filesystem.open(storage_path, "rb") as stream:
+        round_trip = stream.read()
+
+    if round_trip != payload:
+        raise RuntimeError(
+            "managed identity storage proof round trip did not match written payload"
+        )
+
+    return storage_proof
+
+
 def load_checkpoint(
     ds_engine: deepspeed.runtime.engine.DeepSpeedEngine, checkpoint: Checkpoint
 ) -> int:
@@ -192,34 +231,37 @@ def report_metrics_and_save_checkpoint(
     synthetic_model: bool,
     expected_regions: list[str],
     placement_hint_env: str,
+    checkpoint_enabled: bool,
 ) -> None:
     context = ray.train.get_context()
     snapshot = capture_worker_snapshot(run_id, context.get_experiment_name())
+    report_payload = {
+        **metrics,
+        "run_id": run_id,
+        "profile": profile,
+        "smoke_mode": smoke_mode,
+        "synthetic_model": synthetic_model,
+        "world_rank": snapshot.rank,
+        "world_size": snapshot.world_size,
+        "hostname": snapshot.hostname,
+        "region_hint": snapshot.region_hint,
+        "node_hint": snapshot.node_hint,
+    }
 
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        checkpoint_dir = Path(tmp_dir) / "checkpoint"
-        checkpoint_dir.mkdir(parents=True, exist_ok=True)
-        ds_engine.save_checkpoint(str(checkpoint_dir))
-        (checkpoint_dir / "epoch.txt").write_text(str(metrics["epoch"]), encoding="utf-8")
+    if checkpoint_enabled:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            checkpoint_dir = Path(tmp_dir) / "checkpoint"
+            checkpoint_dir.mkdir(parents=True, exist_ok=True)
+            ds_engine.save_checkpoint(str(checkpoint_dir))
+            (checkpoint_dir / "epoch.txt").write_text(str(metrics["epoch"]), encoding="utf-8")
 
-        checkpoint = Checkpoint.from_directory(tmp_dir)
-        ray.train.report(
-            {
-                **metrics,
-                "run_id": run_id,
-                "profile": profile,
-                "smoke_mode": smoke_mode,
-                "synthetic_model": synthetic_model,
-                "world_rank": snapshot.rank,
-                "world_size": snapshot.world_size,
-                "hostname": snapshot.hostname,
-                "region_hint": snapshot.region_hint,
-                "node_hint": snapshot.node_hint,
-            },
-            checkpoint=checkpoint,
-        )
+            checkpoint = Checkpoint.from_directory(tmp_dir)
+            ray.train.report(report_payload, checkpoint=checkpoint)
+    else:
+        ray.train.report(report_payload)
 
     if context.get_world_rank() == 0:
+        summary_path = summary_dir / "proof-summary.json"
         summary = {
             "run_id": run_id,
             "experiment_name": context.get_experiment_name(),
@@ -236,9 +278,14 @@ def report_metrics_and_save_checkpoint(
             },
             "worker_snapshot": asdict(snapshot),
             "metrics": metrics,
-            "status": "draft",
+            "status": "passed",
         }
-        save_summary(summary_dir / "proof-summary.json", summary)
+        write_storage_proof(summary, run_id)
+        save_summary(summary_path, summary)
+        print(
+            f"PROOF_SUMMARY_JSON={json.dumps(summary, sort_keys=True, separators=(',', ':'))}",
+            flush=True,
+        )
 
 
 def train_loop(config: dict[str, Any]) -> None:
@@ -269,7 +316,7 @@ def train_loop(config: dict[str, Any]) -> None:
         vocab_size=config["vocab_size"],
         seed=config["seed"],
     )
-    device = ray.train.torch.get_device()
+    device = torch.device("cpu") if config["cpu_only"] else ray.train.torch.get_device()
     ds_engine.train()
 
     summary_dir = Path(config["evidence_dir"])
@@ -323,6 +370,7 @@ def train_loop(config: dict[str, Any]) -> None:
             synthetic_model=config["synthetic_model"],
             expected_regions=config["expected_regions"],
             placement_hint_env=config["placement_hint_env"],
+            checkpoint_enabled=config["checkpoint_enabled"],
         )
 
 
@@ -345,6 +393,8 @@ def build_train_config(args: argparse.Namespace) -> dict[str, Any]:
         "seed": args.seed,
         "debug_steps": args.debug_steps,
         "evidence_dir": args.evidence_dir,
+        "checkpoint_enabled": args.enable_checkpoints,
+        "cpu_only": args.cpu_only,
         "expected_regions": args.expected_regions,
         "placement_hint_env": args.placement_hint_env,
         "ds_config": {
@@ -391,8 +441,13 @@ def build_argument_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--storage-path",
-        default="/mnt/cluster_storage",
-        help="Shared storage path for Ray Train experiment artifacts.",
+        default="/tmp/anyscale-proof-ray-train",
+        help="Shared storage path for Ray Train checkpoints when --enable-checkpoints is set.",
+    )
+    parser.add_argument(
+        "--enable-checkpoints",
+        action="store_true",
+        help="Persist Ray Train checkpoints to --storage-path.",
     )
     parser.add_argument(
         "--cpu-only",
@@ -424,7 +479,11 @@ def main() -> None:
 
     train_config = build_train_config(args)
     scaling_config = ScalingConfig(num_workers=args.num_workers, use_gpu=not args.cpu_only)
-    run_config = RunConfig(storage_path=args.storage_path, name=args.run_id)
+    if args.enable_checkpoints:
+        Path(args.storage_path).mkdir(parents=True, exist_ok=True)
+        run_config = RunConfig(storage_path=args.storage_path, name=args.run_id)
+    else:
+        run_config = RunConfig(name=args.run_id)
 
     trainer = TorchTrainer(
         train_loop_per_worker=train_loop,
