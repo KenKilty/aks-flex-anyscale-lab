@@ -116,10 +116,11 @@ The proof summary schema includes:
 Expected output:
 
 ```text
-Submitting Anyscale CPU proof flex-proof-cpu-20260708-170512
-Expected head region: westus2
-Expected worker region: westus3
-Job submitted successfully
+Gateway anyscale-operator/anyscale-gateway programmed address: 172.193.180.193
+(anyscale +1.2s) Created compute config: 'cpu-home:6'
+info: submit attempt 1/3 for flex-proof-cpu-20260708-235149
+(anyscale +2m26.1s) Job 'flex-proof-cpu-20260708-235149' transitioned from STARTING to RUNNING
+(anyscale +5m1.0s) Job 'flex-proof-cpu-20260708-235149' reached target state, exiting
 ```
 
 :::note Gate 5 placement contract
@@ -185,6 +186,8 @@ Expected proof-summary shape:
   "profile": "smoke",
   "placement": {
     "expected_regions": ["westus2", "westus3"],
+    "observed_region_hint": "westus3",
+    "observed_node_hint": "k-be9e65e2681b30000",
     "observed_world_size": 1
   },
   "storage_proof": {
@@ -228,24 +231,29 @@ echo "home=${TF_VAR_azure_location} flex=${TF_VAR_flex_region}"
 ```
 
 Verify the worker ran on Flex by checking worker log lines for the Ray worker IP,
-then confirm that IP is one of the Flex NIC secondary `pod-ip-*` addresses:
+then confirm Kubernetes placed that worker pod on the Flex node. In this lab, the
+worker pod IP comes from `TF_VAR_flex_pod_cidr` (for example `10.244.0.0/16`), and
+AKS reaches it through the Module 3 route table rather than by treating it as an AKS
+subnet IP.
 
 ```bash
 .venv/bin/anyscale job logs --name <job-name> | grep 'RayTrainWorker pid='
 
-az network nic ip-config list \
-  --resource-group rg-flexany-dev-wus2 \
-  --nic-name nic-vm-flex-flexany-dev-wus3 \
-  --query '[].{name:name, ip:privateIPAddress}' \
-  -o table
+kubectl get pods -n anyscale-operator \
+  -l "app.kubernetes.io/name=<job-name>" \
+  -o wide --show-labels
 ```
 
 Expected output:
 
 ```text
-RayTrainWorker pid=333, ip=10.60.1.25
-pod-ip-05  10.60.1.25
+RayTrainWorker pid=336, ip=10.244.0.36
+k-be9e65e2681b30000   5/5   Running   10.244.0.36   vm-flex-flexany-dev-wus3   ... ray-node-type=worker
 ```
+
+The proof validator also checks that the remote CPU worker summary reports the Flex
+region. A stale or globally injected home-region hint should fail validation rather
+than being accepted as placement evidence.
 
 ## Optional future GPU utilisation
 

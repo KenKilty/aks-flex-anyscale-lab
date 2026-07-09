@@ -73,7 +73,10 @@ Job <job-name> termination requested.
 ```
 
 This runs `terraform destroy -auto-approve` with the same variable profile used
-to deploy. Terraform handles the ordering defined by `depends_on` blocks.
+to deploy. Terraform handles the ordering defined by `depends_on` blocks. If the
+final resource-group delete is blocked by residual Azure-native Anyscale RP
+resources, the helper removes the remaining `Anyscale.Platform/clouds` resources and
+retries the destroy once.
 
 Expected duration: **10–20 minutes** (AKS cluster deletion is typically the longest step).
 
@@ -91,6 +94,14 @@ Destroy complete! Resources: 62 destroyed.
 Azure occasionally returns transient control-plane errors such as `AnotherOperationInProgress`.
 If the first destroy run fails, run it again — it is safe to retry and will continue
 from where it stopped.
+:::
+
+:::note Anyscale RP residuals
+The Azure-native Anyscale cloud is created through an ARM deployment. On teardown,
+Azure may delete the deployment record before the nested `Anyscale.Platform/clouds`
+and `cloudResources/default` resources disappear. The destroy helper handles this by
+calling the Anyscale RP delete API for those residuals before retrying the final
+resource-group delete.
 :::
 
 ## Step 3 — Verify residual resources

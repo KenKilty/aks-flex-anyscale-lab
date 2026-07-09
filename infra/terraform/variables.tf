@@ -81,6 +81,11 @@ variable "flex_subnet_cidr" {
   type = string
 }
 
+variable "flex_pod_cidr" {
+  type    = string
+  default = "10.244.0.0/16"
+}
+
 variable "dns_forwarding_rules" {
   type = map(object({
     domain_name = string
@@ -123,6 +128,11 @@ variable "system_node_pool_max_count" {
 
 variable "cpu_vm_size" {
   type = string
+}
+
+variable "aks_defender_enabled" {
+  type    = bool
+  default = false
 }
 
 variable "gpu_pool_configs" {

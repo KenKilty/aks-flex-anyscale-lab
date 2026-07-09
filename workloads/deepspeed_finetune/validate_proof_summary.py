@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 from pathlib import Path
@@ -24,7 +25,7 @@ def fail(message: str) -> NoReturn:
     raise SystemExit(f"proof summary validation failed: {message}")
 
 
-def validate_summary(summary: dict[str, object]) -> None:
+def validate_summary(summary: dict[str, object], expected_worker_region: str | None) -> None:
     missing = sorted(REQUIRED_TOP_LEVEL_KEYS.difference(summary))
     if missing:
         fail(f"missing top-level keys: {', '.join(missing)}")
@@ -50,6 +51,20 @@ def validate_summary(summary: dict[str, object]) -> None:
         if key not in placement:
             fail(f"placement missing key: {key}")
 
+    if expected_worker_region is not None:
+        observed_region = str(placement.get("observed_region_hint", "")).strip()
+        worker_region = str(worker_snapshot.get("region_hint", "")).strip()
+        if observed_region != expected_worker_region:
+            fail(
+                "placement observed_region_hint must match expected worker region "
+                f"{expected_worker_region}; got {observed_region or 'empty'}"
+            )
+        if worker_region != expected_worker_region:
+            fail(
+                "worker_snapshot region_hint must match expected worker region "
+                f"{expected_worker_region}; got {worker_region or 'empty'}"
+            )
+
     for key in ("run_id", "rank", "world_size", "hostname", "cuda_available", "device_name"):
         if key not in worker_snapshot:
             fail(f"worker_snapshot missing key: {key}")
@@ -67,10 +82,12 @@ def validate_summary(summary: dict[str, object]) -> None:
 
 
 def main(argv: list[str]) -> None:
-    if len(argv) != 2:
-        raise SystemExit("usage: validate_proof_summary.py <summary.json>")
+    parser = argparse.ArgumentParser(description="Validate an AKS Flex proof summary")
+    parser.add_argument("summary_json")
+    parser.add_argument("--expected-worker-region")
+    args = parser.parse_args(argv[1:])
 
-    summary_path = Path(argv[1])
+    summary_path = Path(args.summary_json)
     if not summary_path.is_file():
         fail(f"file not found: {summary_path}")
 
@@ -80,7 +97,7 @@ def main(argv: list[str]) -> None:
     if not isinstance(summary, dict):
         fail("summary root must be a JSON object")
 
-    validate_summary(summary)
+    validate_summary(summary, args.expected_worker_region)
     print(f"validated: {summary_path}")
 
 

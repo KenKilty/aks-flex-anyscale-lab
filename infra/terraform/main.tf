@@ -123,7 +123,7 @@ module "aks" {
   automatic_upgrade_channel                   = "patch"
   node_os_upgrade_channel                     = "SecurityPatch"
   local_account_disabled                      = true
-  defender_enabled                            = true
+  defender_enabled                            = var.aks_defender_enabled
   key_vault_secrets_provider_enabled          = true
   assign_current_principal_cluster_access     = var.assign_current_principal_cluster_access
   cluster_admin_principal_ids                 = var.aks_cluster_admin_principal_ids
@@ -154,6 +154,34 @@ module "flex_host" {
     azurerm_virtual_network_peering.aks_to_flex,
     azurerm_virtual_network_peering.flex_to_aks,
   ]
+}
+
+resource "azurerm_route_table" "aks_nodes_flex_pods" {
+  count = var.flex_host_enabled ? 1 : 0
+
+  name                          = local.names.route_table_aks_nodes
+  resource_group_name           = azurerm_resource_group.this.name
+  location                      = azurerm_resource_group.this.location
+  bgp_route_propagation_enabled = true
+  tags                          = var.tags
+}
+
+resource "azurerm_route" "aks_to_flex_pods" {
+  count = var.flex_host_enabled ? 1 : 0
+
+  name                   = "flex-pod-cidr"
+  resource_group_name    = azurerm_resource_group.this.name
+  route_table_name       = azurerm_route_table.aks_nodes_flex_pods[0].name
+  address_prefix         = var.flex_pod_cidr
+  next_hop_type          = "VirtualAppliance"
+  next_hop_in_ip_address = module.flex_host[0].private_ip_address
+}
+
+resource "azurerm_subnet_route_table_association" "aks_nodes_flex_pods" {
+  count = var.flex_host_enabled ? 1 : 0
+
+  subnet_id      = module.network.subnet_ids.aks_nodes
+  route_table_id = azurerm_route_table.aks_nodes_flex_pods[0].id
 }
 
 resource "azurerm_role_assignment" "flex_host_cluster_user" {
@@ -204,6 +232,34 @@ resource "azurerm_network_security_rule" "flex_hosts_ssh" {
   destination_port_range      = "22"
   source_address_prefix       = "Internet"
   destination_address_prefix  = "*"
+  resource_group_name         = azurerm_resource_group.this.name
+  network_security_group_name = azurerm_network_security_group.flex_hosts.name
+}
+
+resource "azurerm_network_security_rule" "flex_hosts_aks_to_pods" {
+  name                        = "allow-aks-to-flex-pods"
+  priority                    = 110
+  direction                   = "Inbound"
+  access                      = "Allow"
+  protocol                    = "*"
+  source_port_range           = "*"
+  destination_port_range      = "*"
+  source_address_prefix       = var.vnet_address_space[0]
+  destination_address_prefix  = var.flex_pod_cidr
+  resource_group_name         = azurerm_resource_group.this.name
+  network_security_group_name = azurerm_network_security_group.flex_hosts.name
+}
+
+resource "azurerm_network_security_rule" "flex_hosts_pods_to_aks" {
+  name                        = "allow-flex-pods-to-aks"
+  priority                    = 110
+  direction                   = "Outbound"
+  access                      = "Allow"
+  protocol                    = "*"
+  source_port_range           = "*"
+  destination_port_range      = "*"
+  source_address_prefix       = var.flex_pod_cidr
+  destination_address_prefix  = var.vnet_address_space[0]
   resource_group_name         = azurerm_resource_group.this.name
   network_security_group_name = azurerm_network_security_group.flex_hosts.name
 }

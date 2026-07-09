@@ -49,6 +49,7 @@ ensure_defaults() {
   [[ -n "${TF_VAR_flex_host_user_assigned_identity_ids:-}" ]] || TF_VAR_flex_host_user_assigned_identity_ids="[]"
   [[ -n "${TF_VAR_flex_host_os_disk_size_gb:-}" ]] || TF_VAR_flex_host_os_disk_size_gb="256"
   [[ -n "${TF_VAR_flex_host_source_image_reference:-}" ]] || TF_VAR_flex_host_source_image_reference='{"publisher":"Canonical","offer":"0001-com-ubuntu-server-jammy","sku":"22_04-lts-gen2","version":"latest"}'
+  [[ -n "${TF_VAR_flex_pod_cidr:-}" ]] || TF_VAR_flex_pod_cidr="10.244.0.0/16"
 
   if [[ "${TF_VAR_flex_host_enabled}" == "true" && -z "${TF_VAR_flex_host_admin_ssh_public_key:-}" ]]; then
     [[ -f "${SSH_PRIVATE_KEY_PATH}.pub" ]] || die "Missing TF_VAR_flex_host_admin_ssh_public_key and SSH public key ${SSH_PRIVATE_KEY_PATH}.pub"
@@ -72,6 +73,7 @@ ensure_defaults() {
   export TF_VAR_flex_host_os_disk_size_gb
   export TF_VAR_flex_host_source_image_reference
   export TF_VAR_flex_host_admin_ssh_public_key
+  export TF_VAR_flex_pod_cidr
 }
 
 sync_azure_context() {
@@ -117,12 +119,14 @@ render_tfvars() {
     TF_VAR_anyscale_operator_identity
     TF_VAR_vnet_address_space
     TF_VAR_subnet_cidrs
+    TF_VAR_flex_pod_cidr
     TF_VAR_flex_vnet_address_space
     TF_VAR_flex_subnet_cidr
     TF_VAR_dns_forwarding_rules
     TF_VAR_availability_zones
     TF_VAR_system_node_pool_min_count
     TF_VAR_system_node_pool_max_count
+    TF_VAR_aks_defender_enabled
     TF_VAR_gpu_pool_configs
     TF_VAR_kubernetes_version
     TF_VAR_storage_cors_rule
@@ -179,6 +183,7 @@ render_tfvars() {
     --arg container_insights_data_collection_interval "${TF_VAR_container_insights_data_collection_interval}" \
     --arg container_insights_namespace_filtering_mode "${TF_VAR_container_insights_namespace_filtering_mode}" \
     --arg flex_subnet_cidr "${TF_VAR_flex_subnet_cidr}" \
+    --arg flex_pod_cidr "${TF_VAR_flex_pod_cidr}" \
     --argjson anyscale_operator_identity "${TF_VAR_anyscale_operator_identity}" \
     --argjson anyscale_enabled "${TF_VAR_anyscale_enabled}" \
     --argjson flex_host_enabled "${TF_VAR_flex_host_enabled}" \
@@ -194,6 +199,7 @@ render_tfvars() {
     --argjson availability_zones "${TF_VAR_availability_zones}" \
     --argjson system_node_pool_min_count "${TF_VAR_system_node_pool_min_count}" \
     --argjson system_node_pool_max_count "${TF_VAR_system_node_pool_max_count}" \
+    --argjson aks_defender_enabled "${TF_VAR_aks_defender_enabled}" \
     --argjson gpu_pool_configs "${TF_VAR_gpu_pool_configs}" \
     --argjson kubernetes_version "${TF_VAR_kubernetes_version}" \
     --argjson storage_cors_rule "${TF_VAR_storage_cors_rule}" \
@@ -250,10 +256,12 @@ render_tfvars() {
       subnet_cidrs: $subnet_cidrs,
       flex_vnet_address_space: $flex_vnet_address_space,
       flex_subnet_cidr: $flex_subnet_cidr,
+      flex_pod_cidr: $flex_pod_cidr,
       dns_forwarding_rules: $dns_forwarding_rules,
       availability_zones: $availability_zones,
       system_node_pool_min_count: $system_node_pool_min_count,
       system_node_pool_max_count: $system_node_pool_max_count,
+      aks_defender_enabled: $aks_defender_enabled,
       gpu_pool_configs: $gpu_pool_configs,
       kubernetes_version: $kubernetes_version,
       storage_cors_rule: $storage_cors_rule,
@@ -275,6 +283,72 @@ render_tfvars() {
 
 terraform_cmd() {
   (cd "${TERRAFORM_DIR}" && terraform "$@")
+}
+
+cleanup_residual_anyscale_platform_resources() {
+  local rg cloud child parent api resource_count
+
+  [[ "${TF_VAR_anyscale_enabled:-false}" == "true" ]] || return 0
+
+  rg="$(resource_group_name)"
+  [[ "$(az group exists --name "${rg}" --only-show-errors)" == "true" ]] || return 0
+
+  cloud="${TF_VAR_project}-${TF_VAR_environment}-${TF_VAR_region_short}"
+  child="/subscriptions/${TF_VAR_azure_subscription_id}/resourceGroups/${rg}/providers/Anyscale.Platform/clouds/${cloud}/cloudResources/default"
+  parent="/subscriptions/${TF_VAR_azure_subscription_id}/resourceGroups/${rg}/providers/Anyscale.Platform/clouds/${cloud}"
+
+  resource_count="$(az resource list \
+    --resource-group "${rg}" \
+    --resource-type "Anyscale.Platform/clouds" \
+    --query 'length(@)' \
+    -o tsv \
+    --only-show-errors 2>/dev/null || echo 0)"
+  [[ "${resource_count}" -gt 0 ]] || return 0
+
+  printf 'info: cleaning residual Anyscale.Platform resources before destroy retry\n' >&2
+  for api in 2026-02-01-preview 2023-04-01-preview; do
+    az rest --method delete --url "https://management.azure.com${child}?api-version=${api}" --only-show-errors >/dev/null 2>&1 || true
+  done
+  for api in 2026-02-01-preview 2023-04-01-preview; do
+    az rest --method delete --url "https://management.azure.com${parent}?api-version=${api}" --only-show-errors >/dev/null 2>&1 || true
+  done
+}
+
+ensure_anyscale_gateway() {
+  local rg cluster namespace gateway_name gateway_class
+
+  [[ "${TF_VAR_anyscale_enabled:-false}" == "true" ]] || return 0
+
+  need_cmd az
+  need_cmd kubectl
+
+  rg="rg-${TF_VAR_project}-${TF_VAR_environment}-${TF_VAR_region_short}"
+  cluster="$(aks_cluster_name)"
+  namespace="${TF_VAR_anyscale_operator_namespace}"
+  gateway_name="${TF_VAR_anyscale_gateway_name:-anyscale-gateway}"
+  gateway_class="approuting-istio"
+
+  az aks get-credentials --resource-group "${rg}" --name "${cluster}" --overwrite-existing --only-show-errors >/dev/null
+  kubectl get gatewayclass "${gateway_class}" >/dev/null
+  kubectl get namespace "${namespace}" >/dev/null
+
+  kubectl apply -f - <<EOF
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: ${gateway_name}
+  namespace: ${namespace}
+spec:
+  gatewayClassName: ${gateway_class}
+  listeners:
+    - name: http
+      port: 80
+      protocol: HTTP
+      allowedRoutes:
+        namespaces:
+          from: All
+EOF
+  kubectl -n "${namespace}" wait "gateway/${gateway_name}" --for=condition=Programmed --timeout=5m
 }
 
 download_flex_helper() {
@@ -371,7 +445,7 @@ generate_flex_config() {
 }
 
 bootstrap_flex_host() {
-  local config_path flex_release_url host_ip admin_user flex_node_name cluster_rg cluster_name ssh_opts
+  local aks_vnet_cidr config_path flex_release_url host_ip admin_user flex_node_name cluster_rg cluster_name ssh_opts
 
   need_cmd az
   need_cmd kubectl
@@ -392,10 +466,12 @@ bootstrap_flex_host() {
   flex_node_name="$(terraform_cmd output -raw flex_host_vm_name 2>/dev/null || true)"
   cluster_rg="$(resource_group_name)"
   cluster_name="$(aks_cluster_name)"
+  aks_vnet_cidr="$(jq -r '.[0]' <<<"${TF_VAR_vnet_address_space}")"
 
   [[ -n "${host_ip}" ]] || die "Missing flex_host_public_ip Terraform output. Deploy with TF_VAR_flex_host_enabled=true and TF_VAR_flex_host_public_ip_enabled=true."
   [[ -n "${admin_user}" ]] || admin_user="${TF_VAR_flex_host_admin_username}"
   [[ -n "${flex_node_name}" ]] || die "Missing flex_host_vm_name Terraform output. Deploy with TF_VAR_flex_host_enabled=true."
+  [[ -n "${aks_vnet_cidr}" && "${aks_vnet_cidr}" != "null" ]] || die "Unable to determine AKS VNet CIDR from TF_VAR_vnet_address_space"
   [[ -f "${SSH_PRIVATE_KEY_PATH}" ]] || die "Missing SSH private key at ${SSH_PRIVATE_KEY_PATH}"
 
   ssh_opts=(-i "${SSH_PRIVATE_KEY_PATH}" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null)
@@ -403,7 +479,7 @@ bootstrap_flex_host() {
 
   scp "${ssh_opts[@]}" "${config_path}" "${admin_user}@${host_ip}:/tmp/aks-flex-node-config.json"
 
-  # shellcheck disable=SC2029
+  # shellcheck disable=SC2029,SC1083,SC2140
   ssh "${ssh_opts[@]}" "${admin_user}@${host_ip}" \
     "set -euo pipefail && \
      TARGET_VERSION='${AKS_FLEX_NODE_VERSION}' && \
@@ -421,6 +497,20 @@ bootstrap_flex_host() {
      fi && \
      sudo install -d -m 0755 /etc/aks-flex-node && \
      sudo install -m 0600 /tmp/aks-flex-node-config.json /etc/aks-flex-node/config.json && \
+    FLEX_POD_CIDR='${TF_VAR_flex_pod_cidr:-10.244.0.0/16}' && \
+     AKS_VNET_CIDR='${aks_vnet_cidr}' && \
+     OUT_IFACE=\$(ip route get 1.1.1.1 | awk '{for (i = 1; i <= NF; i++) if (\$i == "dev") print \$(i + 1)}' | head -1) && \
+     PRIMARY_IP=\$(ip route get 1.1.1.1 | awk '{for (i = 1; i <= NF; i++) if (\$i == "src") print \$(i + 1)}' | head -1) && \
+     test -n "\${OUT_IFACE}" && test -n "\${PRIMARY_IP}" && \
+     sudo sysctl -w net.ipv4.ip_forward=1 >/dev/null && \
+     echo 'net.ipv4.ip_forward=1' | sudo tee /etc/sysctl.d/99-aks-flex-node-forwarding.conf >/dev/null && \
+     (sudo iptables -t nat -D POSTROUTING -s "\${FLEX_POD_CIDR}" -o "\${OUT_IFACE}" -j MASQUERADE 2>/dev/null || true) && \
+     if ! sudo iptables -t nat -C POSTROUTING -s "\${FLEX_POD_CIDR}" -d "\${AKS_VNET_CIDR}" -o "\${OUT_IFACE}" -j ACCEPT 2>/dev/null; then \
+       sudo iptables -t nat -I POSTROUTING 1 -s "\${FLEX_POD_CIDR}" -d "\${AKS_VNET_CIDR}" -o "\${OUT_IFACE}" -j ACCEPT; \
+     fi && \
+     if ! sudo iptables -t nat -C POSTROUTING -s "\${FLEX_POD_CIDR}" -o "\${OUT_IFACE}" -j SNAT --to-source "\${PRIMARY_IP}" 2>/dev/null; then \
+       sudo iptables -t nat -A POSTROUTING -s "\${FLEX_POD_CIDR}" -o "\${OUT_IFACE}" -j SNAT --to-source "\${PRIMARY_IP}"; \
+     fi && \
      sudo /usr/local/bin/aks-flex-node start --config /etc/aks-flex-node/config.json && \
      if sudo systemctl cat aks-flex-node-agent >/dev/null 2>&1; then \
        sudo systemctl status aks-flex-node-agent --no-pager -l || true; \
@@ -508,6 +598,7 @@ status() {
 
 main() {
   local command="${1:-}"
+  local destroy_rc
 
   case "${command}" in
   doctor)
@@ -554,6 +645,7 @@ main() {
       terraform_cmd test
     fi
     terraform_cmd apply -auto-approve
+    ensure_anyscale_gateway
     ;;
   destroy)
     need_cmd az
@@ -562,7 +654,14 @@ main() {
     sync_azure_context
     render_tfvars
     terraform_cmd init
+    set +e
     terraform_cmd destroy -auto-approve
+    destroy_rc=$?
+    set -e
+    if [[ "${destroy_rc}" -ne 0 ]]; then
+      cleanup_residual_anyscale_platform_resources
+      terraform_cmd destroy -auto-approve
+    fi
     ;;
   output)
     terraform_cmd output

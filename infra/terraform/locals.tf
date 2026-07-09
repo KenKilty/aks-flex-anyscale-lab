@@ -12,6 +12,7 @@ locals {
     subnet_firewall         = "AzureFirewallSubnet"
     subnet_bastion          = "AzureBastionSubnet"
     nsg_aks_nodes           = "nsg-aks-nodes-${local.suffix}"
+    route_table_aks_nodes   = "rt-aks-nodes-${local.suffix}"
     aks                     = "aks-${local.suffix}"
     aks_dns_prefix          = "aks-${local.suffix}"
     log_analytics           = "log-${local.suffix}"

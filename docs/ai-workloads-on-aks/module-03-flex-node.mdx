@@ -106,6 +106,14 @@ workload pods are placed on the Flex node. Do not add secondary IPs manually in 
 portal as a permanent fix; the Terraform plan must preserve them.
 :::
 
+:::note Gate 2: AKS must route to the Flex pod CIDR
+Flex workload pods use `TF_VAR_flex_pod_cidr` (for example `10.244.0.0/16`). AKS
+pods must have a route for that CIDR through the Flex host primary IP, and the Flex
+host must be allowed to forward return traffic. Terraform creates the AKS subnet UDR,
+Flex NSG forwarded-traffic rules, and enables NIC IP forwarding when
+`TF_VAR_flex_host_enabled="true"`.
+:::
+
 Validate the Flex NIC pod IP capacity after apply:
 
 ```bash
@@ -123,6 +131,25 @@ Name       PrivateIp    Primary
 ipconfig1  10.60.1.4    True
 podip-001  10.60.1.20   False
 podip-002  10.60.1.21   False
+```
+
+Validate the AKS-to-Flex pod route after apply:
+
+```bash
+source .env
+az network route-table route list \
+  --resource-group "rg-${TF_VAR_project}-${TF_VAR_environment}-${TF_VAR_region_short}" \
+  --route-table-name "rt-aks-nodes-${TF_VAR_project}-${TF_VAR_environment}-${TF_VAR_region_short}" \
+  --query '[].{name:name,prefix:addressPrefix,nextHop:nextHopIpAddress}' \
+  -o table
+```
+
+Expected output includes:
+
+```text
+Name           Prefix         NextHop
+-------------  -------------  --------
+flex-pod-cidr  10.244.0.0/16  10.60.1.4
 ```
 
 ## Step 3 — Set up Flex Node RBAC and generate config
@@ -324,6 +351,8 @@ kubectl get node "$FLEX_NODE" \
 | `aks-flex-node-agent` unit missing after bootstrap | Host bootstrap did not complete service install path | Check `machinectl list` and `journalctl -M kube1 -u kubelet`; re-run `flex-bootstrap` and capture host logs |
 | Kubelet errors show `dial tcp: lookup <aks-fqdn> ... no such host` | Stale/incorrect cluster FQDN in config | Re-run `flex-config` to regenerate `.cache/flex/aks-flex-node-config.json` and retry bootstrap |
 | Kubelet logs show `certificatesigningrequests.certificates.k8s.io is forbidden` or repeated `Unauthorized` | Flex host identity is missing required AKS RBAC at cluster scope | Re-run `flex-config` to re-apply bootstrap RBAC and verify cluster role bindings exist before re-running `flex-bootstrap` |
+| Flex pods resolve DNS but cannot reach HTTPS endpoints | Flex host is not forwarding/SNATing Flex pod egress | Re-run `flex-bootstrap`; verify host `net.ipv4.ip_forward=1` and NAT has no-NAT for Flex pod CIDR to AKS VNet plus SNAT to the host primary IP for external egress |
+| Ray head on AKS cannot reach a Flex worker pod IP | AKS subnet has no UDR to `TF_VAR_flex_pod_cidr`, Flex NSG blocks forwarded traffic, or Flex host return traffic is SNATed incorrectly | Re-apply Terraform so the AKS route table, Flex NSG forwarded rules, NIC IP forwarding, and host no-NAT/SNAT rules are present |
 | No NVIDIA labels | GPU driver did not initialise | Check `nvidia-smi` on the host via SSH; re-validate image SKU |
 
 ## Next step

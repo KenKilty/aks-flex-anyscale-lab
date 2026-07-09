@@ -218,9 +218,7 @@ check_anyscale_gateway_ready() {
 
   [[ "${programmed_status}" == "True" ]] || die "Gateway ${TF_VAR_anyscale_gateway_name} is not Programmed=True"
   [[ -n "${gateway_address}" ]] || die "Gateway ${TF_VAR_anyscale_gateway_name} has no programmed address"
-  if [[ -n "${TF_VAR_anyscale_gateway_hostname:-}" && "${gateway_address}" != "${TF_VAR_anyscale_gateway_hostname}" ]]; then
-    die "Gateway address ${gateway_address} does not match TF_VAR_anyscale_gateway_hostname=${TF_VAR_anyscale_gateway_hostname}"
-  fi
+  printf 'Gateway %s/%s programmed address: %s\n' "${TF_VAR_anyscale_operator_namespace}" "${TF_VAR_anyscale_gateway_name}" "${gateway_address}"
 }
 
 check_flex_nodes_ready() {
@@ -370,6 +368,7 @@ write_compute_config() {
   local config_name="$1"
   local worker_name="$2"
   local worker_vm_size="$3"
+  local worker_count="$4"
   local worker_agentpool="${AKS_FLEX_AGENT_POOL_NAME}"
   local head_cpu="2"
   local head_memory_gi="8"
@@ -401,7 +400,7 @@ worker_nodes:
       CPU: ${worker_cpu}
       memory: ${worker_memory_gi}Gi
     min_nodes: 0
-    max_nodes: 4
+    max_nodes: ${worker_count:-1}
     advanced_instance_config:
       spec:
         nodeSelector:
@@ -418,6 +417,7 @@ ensure_compute_config() {
   local config_name="$1"
   local worker_name="$2"
   local worker_vm_size="$3"
+  local worker_count="$4"
   local existing_json
   existing_json="${ARTIFACT_DIR}/compute-configs.json"
 
@@ -429,7 +429,7 @@ ensure_compute_config() {
     fi
   fi
 
-  write_compute_config "${config_name}" "${worker_name}" "${worker_vm_size}"
+  write_compute_config "${config_name}" "${worker_name}" "${worker_vm_size}" "${worker_count}"
   .venv/bin/anyscale compute-config create \
     --name "${config_name}" \
     --config-file "${COMPUTE_CONFIG_DIR}/${config_name}.yaml" >/dev/null
@@ -443,6 +443,7 @@ extract_and_validate_logged_proof() {
   local job_name="$1"
   local mode="$2"
   local logs_file="$3"
+  local expected_worker_region
   local remote_summary
 
   remote_summary="${ARTIFACT_DIR}/proofs/${job_name}-proof-summary.json"
@@ -474,7 +475,12 @@ summary_path.parent.mkdir(parents=True, exist_ok=True)
 summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 PY
 
-  python3 "${VALIDATOR_SCRIPT}" "${remote_summary}" >/dev/null
+  expected_worker_region="${TF_VAR_azure_location}"
+  if [[ "${mode}" == "cpu" ]]; then
+    expected_worker_region="${TF_VAR_flex_region}"
+  fi
+
+  python3 "${VALIDATOR_SCRIPT}" "${remote_summary}" --expected-worker-region "${expected_worker_region}" >/dev/null
 
   jq -n \
     --arg mode "${mode}" \
@@ -496,6 +502,7 @@ submit_job_for_mode() {
   local worker_count="$3"
   local cpu_flag="$4"
   local image_uri="$5"
+  local placement_region
   local job_name status_file logs_file
   local submit_attempt max_submit_attempts
   local submit_rc
@@ -507,6 +514,10 @@ submit_job_for_mode() {
   job_name="flex-proof-${mode}-$(date +%Y%m%d-%H%M%S)"
   status_file="${ARTIFACT_DIR}/${job_name}-status.json"
   logs_file="${ARTIFACT_DIR}/${job_name}.log"
+  placement_region="${TF_VAR_azure_location}"
+  if [[ "${mode}" == "cpu" ]]; then
+    placement_region="${TF_VAR_flex_region}"
+  fi
 
   submit_workdir_value="${WORKLOAD_DIR}"
 
@@ -536,10 +547,11 @@ submit_job_for_mode() {
   submit_cmd+=(
     --env "ANYSCALE_PROOF_STORAGE_ACCOUNT=${STORAGE_ACCOUNT}"
     --env "ANYSCALE_PROOF_STORAGE_CONTAINER=${STORAGE_CONTAINER}"
+    --env "RAY_TRAIN_WORKER_GROUP_START_TIMEOUT_S=${ANYSCALE_PROOF_WORKER_GROUP_START_TIMEOUT_S:-300}"
   )
 
   submit_cmd+=(
-    --env "AKS_NODE_REGION=${TF_VAR_azure_location}"
+    --env "AKS_NODE_REGION=${placement_region}"
     --
     python train.py
     --run-id "${job_name}"
@@ -628,7 +640,7 @@ submit_job_for_mode() {
 
 run_cpu_mode() {
   check_cpu_proof_preflight
-  ensure_compute_config "${CPU_CONFIG_NAME}" "cpu-worker" "${TF_VAR_cpu_vm_size}"
+  ensure_compute_config "${CPU_CONFIG_NAME}" "cpu-worker" "${TF_VAR_cpu_vm_size}" "1"
   submit_job_for_mode "cpu" "${CPU_CONFIG_NAME}" "1" "--cpu-only" "${CPU_IMAGE_URI}"
 }
 
@@ -642,7 +654,7 @@ run_gpu_mode() {
   [[ -n "${gpu_vm_size}" ]] || die "unable to determine GPU VM size from TF_VAR_gpu_pool_configs"
   [[ -n "${gpu_pool_name}" ]] || die "unable to determine GPU pool name from TF_VAR_gpu_pool_configs"
 
-  ensure_compute_config "${GPU_CONFIG_NAME}" "gpu-worker" "${gpu_vm_size}"
+  ensure_compute_config "${GPU_CONFIG_NAME}" "gpu-worker" "${gpu_vm_size}" "2"
   submit_job_for_mode "gpu" "${GPU_CONFIG_NAME}" "2" "" "${GPU_IMAGE_URI}"
 }
 

@@ -157,7 +157,8 @@ This creates:
 
 - Azure-native Anyscale cloud resource through AzAPI
 - AKS marketplace extension for the Anyscale operator
-- Gateway API resources for Anyscale ingress
+- Gateway API resources for Anyscale ingress, including an explicit `anyscale-gateway`
+  resource when the extension does not create one itself
 - Workload Identity federation for secure authentication
 - RBAC bindings for operator access
 
@@ -193,6 +194,11 @@ Expected output:
 ```
 
 ## Step 4 — Verify the operator
+
+The helper waits for the marketplace extension, then ensures
+`anyscale-operator/anyscale-gateway` exists and is `Programmed=True`. Treat a missing
+Gateway as a hard stop; Anyscale jobs can submit but cannot reliably expose Ray
+services until this path is ready.
 
 ```bash
 kubectl get pods,gateway -n anyscale-operator -o wide

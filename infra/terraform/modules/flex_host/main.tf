@@ -10,10 +10,11 @@ resource "azurerm_public_ip" "this" {
 }
 
 resource "azurerm_network_interface" "this" {
-  name                = "nic-${var.name}"
-  resource_group_name = var.resource_group_name
-  location            = var.location
-  tags                = var.tags
+  name                  = "nic-${var.name}"
+  resource_group_name   = var.resource_group_name
+  location              = var.location
+  ip_forwarding_enabled = true
+  tags                  = var.tags
 
   ip_configuration {
     name                          = "ipconfig"
