@@ -169,7 +169,7 @@ before continuing. GPU quota can be requested later if you want to extend the la
 | Module sequence | Primary path for this workshop | Future optional extension |
 | AKS home region | `westus2` | Must be revalidated for extension and GPU quota |
 | Flex region | `westus3` | Must be revalidated for GPU host quota |
-| Proof workload | CPU-only Ray proof | GPU-enabled proof after the CPU gate passes |
+| Proof workload | CPU-only Ray proof on Flex | GPU-enabled Ray proof on Flex after the CPU gate passes |
 
 Record the organized path in `.env`:
 
@@ -178,7 +178,7 @@ TF_VAR_azure_location="westus2"
 TF_VAR_region_short="wus2"
 TF_VAR_flex_region="westus3"
 TF_VAR_flex_region_short="wus3"
-TF_VAR_gpu_pool_configs='{"T4":{"name":"gput4","vm_size":"Standard_NC16as_T4_v3","product_name":"NVIDIA-T4","gpu_count":"1","min_count":0,"max_count":2,"availability_zones":[]}}'
+TF_VAR_gpu_pool_configs='{}'
 ```
 
 :::note Gate 0: no proof runs yet

@@ -247,17 +247,16 @@ Ray job. The expected placement is:
 
 | Step | CPU path | GPU path |
 | --- | --- | --- |
-| Head pod | AKS CPU node in `westus2` | Future optional GPU-capable AKS node |
-| Worker pod | Flex node `agentpool=aksflexnodes` in `westus3` | Future optional GPU Flex node |
+| Head pod | AKS CPU node in `westus2` | AKS CPU node in `westus2` |
+| Worker pod | Flex node `agentpool=aksflexnodes` in `westus3` | GPU-capable Flex node `agentpool=aksflexnodes` in `westus3` |
 | DNS policy | Normal `ClusterFirst` | Normal `ClusterFirst` after GPU enablement |
 
 Do not submit the proof yet. Module 5 performs the final preflight checks, then
 Module 6 runs `./scripts/run-anyscale-proof.sh --mode cpu`.
 
-:::tip Optional future GPU configs
-GPU compute configs can be added after the CPU proof succeeds and GPU quota is available.
-Keep them out of the primary flow so the lab remains repeatable in subscriptions with
-no T4 quota.
+:::tip GPU configs
+Run the GPU proof only after the CPU proof succeeds, T4 quota is available in the
+Flex region, and Module 5 shows `nvidia.com/gpu` allocatable on the Flex node.
 :::
 
 ## Next step

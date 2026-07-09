@@ -54,6 +54,22 @@ TF_VAR_flex_host_vm_size="Standard_D4s_v5"
 TF_VAR_flex_host_source_image_reference='{"publisher":"Canonical","offer":"ubuntu-24_04-lts","sku":"server","version":"latest"}'
 ```
 
+For the GPU path, use a GPU VM size and a host image with the NVIDIA driver baked
+in before Flex bootstrap. The currently validated image family from the AKS Flex
+Node GPU guide is Ubuntu HPC `2204`:
+
+```bash
+TF_VAR_flex_host_vm_size="Standard_NC16as_T4_v3"
+TF_VAR_flex_host_source_image_reference='{"publisher":"microsoft-dsvm","offer":"ubuntu-hpc","sku":"2204","version":"latest"}'
+ANYSCALE_FLEX_GPU_ENABLED="true"
+ANYSCALE_PROOF_GPU_ACCELERATOR_TYPE="T4"
+ANYSCALE_PROOF_GPU_PRODUCT_LABEL="NVIDIA-T4"
+ANYSCALE_PROOF_GPU_TARGET="flex"
+```
+
+AKS Flex Node does not install the NVIDIA kernel driver. Confirm the host image
+has a working driver before treating the GPU path as ready.
+
 Expected output after saving `.env` and rechecking the values:
 
 ```text

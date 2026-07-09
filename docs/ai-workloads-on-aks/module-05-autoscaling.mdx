@@ -54,7 +54,6 @@ Name    OsType    VmSize                 Count    MinCount    MaxCount    Mode
 ------  --------  ---------------------  -------  ----------  ----------  ------
 sys     Linux     Standard_D4s_v5         1        1           3           System
 cpu     Linux     Standard_D4s_v5         0        0           4           User
-gput4   Linux     Standard_NC16as_T4_v3   0        0           0           User
 ```
 
 ## Step 2 — Set quota-aware bounds in `.env`
@@ -64,7 +63,7 @@ gput4   Linux     Standard_NC16as_T4_v3   0        0           0           User
 ```bash
 TF_VAR_cpu_pool_min_count="0"
 TF_VAR_cpu_pool_max_count="4"
-TF_VAR_gpu_pool_configs='{"T4":{"name":"gput4","vm_size":"Standard_NC16as_T4_v3","product_name":"NVIDIA-T4","gpu_count":"1","min_count":0,"max_count":0,"availability_zones":[]}}'
+TF_VAR_gpu_pool_configs='{}'
 ```
 
 Expected output after saving `.env` and checking the values:
@@ -72,16 +71,28 @@ Expected output after saving `.env` and checking the values:
 ```text
 TF_VAR_cpu_pool_min_count="0"
 TF_VAR_cpu_pool_max_count="4"
-TF_VAR_gpu_pool_configs='{"T4":{"name":"gput4","vm_size":"Standard_NC16as_T4_v3","product_name":"NVIDIA-T4","gpu_count":"1","min_count":0,"max_count":0,"availability_zones":[]}}'
+TF_VAR_gpu_pool_configs='{}'
 ```
 
 ### GPU path
 
+Choose the GPU path in Module 3 before provisioning the Flex host. If you are
+continuing from a CPU-only host, changing the Flex VM size or image will replace
+that host; use a fresh lab run for the cleanest student path.
+
 ```bash
-TF_VAR_gpu_pool_configs='{"T4":{"name":"gput4","vm_size":"Standard_NC16as_T4_v3","product_name":"NVIDIA-T4","gpu_count":"1","min_count":1,"max_count":2,"availability_zones":[]}}'
+TF_VAR_flex_host_vm_size="Standard_NC16as_T4_v3"
+TF_VAR_flex_host_source_image_reference='{"publisher":"microsoft-dsvm","offer":"ubuntu-hpc","sku":"2204","version":"latest"}'
+ANYSCALE_FLEX_GPU_ENABLED="true"
+ANYSCALE_PROOF_GPU_ACCELERATOR_TYPE="T4"
+ANYSCALE_PROOF_GPU_PRODUCT_LABEL="NVIDIA-T4"
+ANYSCALE_PROOF_GPU_TARGET="flex"
+ANYSCALE_PROOF_GPU_WORKER_COUNT="1"
 ```
 
-Only enable this after the CPU proof succeeds and you have confirmed T4 quota.
+Only enable this after the CPU proof succeeds and you have confirmed T4 quota in
+the Flex region. GPU workers in this lab must run on the Flex node, not an AKS
+managed GPU pool.
 
 ## Step 3 — Apply the profile
 
@@ -90,6 +101,8 @@ Only enable this after the CPU proof succeeds and you have confirmed T4 quota.
 ```
 
 This updates the node pool `min_count`/`max_count` without replacing nodes.
+If you changed the Flex host VM size or image for the GPU path, Terraform will
+replace the Flex host so the new GPU-capable image can boot.
 
 Expected output:
 
@@ -99,9 +112,25 @@ Apply complete! Resources: 0 added, 1 changed, 0 destroyed.
 
 ## Step 4 — Run the final preflight gates
 
-If you enabled the GPU path, install the NVIDIA device plugin before running the
-gate. The helper pins the plugin to AKS GPU nodes and adds the taint tolerations
-used by this lab's GPU pool.
+If you enabled the GPU path, first confirm the Flex host driver and then install
+the NVIDIA device plugin before running the gate. The helper pins the plugin to
+the Flex node and adds the taint tolerations used by this lab.
+
+```bash
+ssh -i "$SSH_PRIVATE_KEY_PATH" \
+  "${TF_VAR_flex_host_admin_username}@$(./scripts/anyscale-aks.sh output -raw flex_host_public_ip)" \
+  'nvidia-smi --query-gpu=name,driver_version --format=csv,noheader'
+```
+
+Expected output:
+
+```text
+Tesla T4, <driver-version>
+```
+
+The helper pins the plugin to the Flex node and labels that node with
+`nvidia.com/gpu.product=NVIDIA-T4`, matching the selector Anyscale adds for T4
+GPU workers.
 
 ```bash
 ./scripts/install-nvidia-device-plugin.sh
@@ -112,7 +141,7 @@ Expected output:
 ```text
 daemonset.apps/nvidia-device-plugin-daemonset configured
 daemon set "nvidia-device-plugin-daemonset" successfully rolled out
-NVIDIA device plugin ready: 1 allocatable GPU(s) in pool gput4
+NVIDIA device plugin ready: 1 allocatable GPU(s) in pool aksflexnodes
 ```
 
 Use the gate script instead of pasting long diagnostic pods by hand. It checks the
@@ -128,7 +157,7 @@ Expected output:
 
 ```text
 PASS M5-01 CPU node pool autoscaling configured
-PASS M5-02 GPU node pool available with allocatable GPU
+PASS M5-02 Flex GPU node available with allocatable GPU
 PASS Flex node vm-flex-flexany-dev-wus3 Ready in westus3
 PASS kube-proxy-flex ready 1/1
 PASS Flex ClusterFirst DNS resolves Anyscale and Kubernetes service names

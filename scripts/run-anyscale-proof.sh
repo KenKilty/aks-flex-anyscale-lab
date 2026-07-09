@@ -143,19 +143,16 @@ cloud_accessible() {
   [[ -n "${CLOUD_REF}" ]]
 }
 
-resolve_gpu_vm_size() {
-  jq -r 'to_entries[0].value.vm_size // empty' <<<"${TF_VAR_gpu_pool_configs}"
-}
-
-resolve_gpu_pool_name() {
-  jq -r 'to_entries[0].value.name // empty' <<<"${TF_VAR_gpu_pool_configs}"
-}
-
 resolve_gpu_accelerator_type() {
-  jq -r 'to_entries[0].key // empty' <<<"${TF_VAR_gpu_pool_configs}"
+  if [[ "${TF_VAR_gpu_pool_configs}" != "{}" ]]; then
+    jq -r 'to_entries[0].key // empty' <<<"${TF_VAR_gpu_pool_configs}"
+    return 0
+  fi
+
+  printf '%s\n' "${ANYSCALE_PROOF_GPU_ACCELERATOR_TYPE:-T4}"
 }
 
-check_cpu_proof_preflight() {
+check_flex_proof_preflight() {
   local anyscale_dns_name
 
   anyscale_dns_name="$(lab_gate_anyscale_host_name "${ANYSCALE_HOST}")"
@@ -216,10 +213,13 @@ collect_kubernetes_placement_evidence() {
       }' >"${placement_file}"
 
   jq -e '.pods | length > 0' "${placement_file}" >/dev/null || die "no Kubernetes placement pods found for ${job_name}"
-  if [[ "${mode}" == "cpu" ]]; then
+  if [[ "${mode}" == "cpu" || "${mode}" == "gpu" ]]; then
     jq -e --arg region "${TF_VAR_flex_region}" \
       '.pods[] | select(.ray_node_type == "worker" and .node_region == $region)' \
-      "${placement_file}" >/dev/null || die "no CPU proof worker pod placed in Flex region ${TF_VAR_flex_region} (placement: ${placement_file})"
+      "${placement_file}" >/dev/null || die "no ${mode} proof worker pod placed in Flex region ${TF_VAR_flex_region} (placement: ${placement_file})"
+    jq -e --arg pool "${AKS_FLEX_AGENT_POOL_NAME}" \
+      '.pods[] | select(.ray_node_type == "worker" and .node_agentpool == $pool)' \
+      "${placement_file}" >/dev/null || die "no ${mode} proof worker pod placed on Flex agent pool ${AKS_FLEX_AGENT_POOL_NAME} (placement: ${placement_file})"
   fi
 
   printf '%s\n' "${placement_file}"
@@ -247,12 +247,10 @@ write_compute_config() {
             effect: NoSchedule"
 
   # Match private-sample strategy: resource-based config + agentpool selectors,
-  # not cloud VM instance_type values. CPU proof workers run on the Flex node.
+  # not cloud VM instance_type values. Proof workers run on the Flex node.
   if [[ "${worker_name}" == "gpu-worker" ]]; then
     local gpu_accelerator_type
-    worker_agentpool="$(resolve_gpu_pool_name)"
     gpu_accelerator_type="$(resolve_gpu_accelerator_type)"
-    [[ -n "${worker_agentpool}" ]] || die "unable to determine GPU pool name from TF_VAR_gpu_pool_configs"
     [[ -n "${gpu_accelerator_type}" ]] || die "unable to determine GPU accelerator type from TF_VAR_gpu_pool_configs"
     worker_cpu="4"
     worker_memory_gi="16"
@@ -263,9 +261,12 @@ write_compute_config() {
       ray.io/accelerator-type: ${gpu_accelerator_type}"
     worker_tolerations="
         tolerations:
-          - key: nvidia.com/gpu
+          - key: aks-flex-node
             operator: Equal
-            value: present
+            value: \"true\"
+            effect: NoSchedule
+          - key: nvidia.com/gpu
+            operator: Exists
             effect: NoSchedule
           - key: node.anyscale.com/capacity-type
             operator: Equal
@@ -368,7 +369,7 @@ summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", en
 PY
 
   expected_worker_region="${TF_VAR_azure_location}"
-  if [[ "${mode}" == "cpu" ]]; then
+  if [[ "${mode}" == "cpu" || "${mode}" == "gpu" ]]; then
     expected_worker_region="${TF_VAR_flex_region}"
   fi
 
@@ -411,7 +412,7 @@ submit_job_for_mode() {
   status_file="${ARTIFACT_DIR}/${job_name}-status.json"
   logs_file="${ARTIFACT_DIR}/${job_name}.log"
   placement_region="${TF_VAR_azure_location}"
-  if [[ "${mode}" == "cpu" ]]; then
+  if [[ "${mode}" == "cpu" || "${mode}" == "gpu" ]]; then
     placement_region="${TF_VAR_flex_region}"
   fi
   worker_group_start_timeout_s="${ANYSCALE_PROOF_WORKER_GROUP_START_TIMEOUT_S:-300}"
@@ -539,23 +540,22 @@ submit_job_for_mode() {
 }
 
 run_cpu_mode() {
-  check_cpu_proof_preflight
+  check_flex_proof_preflight
   ensure_compute_config "${CPU_CONFIG_NAME}" "cpu-worker" "${TF_VAR_cpu_vm_size}" "1"
   submit_job_for_mode "cpu" "${CPU_CONFIG_NAME}" "1" "--cpu-only" "${CPU_IMAGE_URI}"
 }
 
 run_gpu_mode() {
-  local gpu_vm_size
-  local gpu_pool_name
+  local gpu_accelerator_type
+  local gpu_worker_count
 
-  [[ "${TF_VAR_gpu_pool_configs}" != "{}" ]] || die "gpu mode requested but TF_VAR_gpu_pool_configs is empty"
-  gpu_vm_size="$(resolve_gpu_vm_size)"
-  gpu_pool_name="$(resolve_gpu_pool_name)"
-  [[ -n "${gpu_vm_size}" ]] || die "unable to determine GPU VM size from TF_VAR_gpu_pool_configs"
-  [[ -n "${gpu_pool_name}" ]] || die "unable to determine GPU pool name from TF_VAR_gpu_pool_configs"
+  gpu_accelerator_type="$(resolve_gpu_accelerator_type)"
+  [[ -n "${gpu_accelerator_type}" ]] || die "gpu mode requested but no accelerator type was found; set ANYSCALE_PROOF_GPU_ACCELERATOR_TYPE or TF_VAR_gpu_pool_configs"
+  gpu_worker_count="${ANYSCALE_PROOF_GPU_WORKER_COUNT:-1}"
 
-  ensure_compute_config "${GPU_CONFIG_NAME}" "gpu-worker" "${gpu_vm_size}" "2"
-  submit_job_for_mode "gpu" "${GPU_CONFIG_NAME}" "2" "" "${GPU_IMAGE_URI}"
+  check_flex_proof_preflight
+  ensure_compute_config "${GPU_CONFIG_NAME}" "gpu-worker" "${TF_VAR_flex_host_vm_size:-}" "${gpu_worker_count}"
+  submit_job_for_mode "gpu" "${GPU_CONFIG_NAME}" "${gpu_worker_count}" "" "${GPU_IMAGE_URI}"
 }
 
 write_final_summary() {

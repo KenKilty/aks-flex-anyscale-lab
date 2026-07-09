@@ -341,3 +341,143 @@ variable "anyscale_gateway_hostname" {
   type        = string
   default     = ""
 }
+
+variable "anyscale_platform_admin_role_assignments" {
+  description = <<-EOT
+    Legacy Azure RBAC role assignments scoped to the Anyscale Platform cloud ARM resource.
+
+    Prefer anyscale_platform_role_assignments for new configuration because the
+    Anyscale Platform Administrator role is only effective at subscription scope
+    during public preview.
+  EOT
+  type = map(object({
+    principal_id         = string
+    principal_type       = optional(string, "User")
+    role_definition_id   = optional(string)
+    role_definition_name = optional(string)
+  }))
+  default = {}
+
+  validation {
+    condition     = alltrue([for assignment in values(var.anyscale_platform_admin_role_assignments) : can(regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$", assignment.principal_id))])
+    error_message = "anyscale_platform_admin_role_assignments principal_id values must be Entra object IDs."
+  }
+
+  validation {
+    condition     = alltrue([for assignment in values(var.anyscale_platform_admin_role_assignments) : contains(["User", "Group", "ServicePrincipal", "ForeignGroup", "Device"], assignment.principal_type)])
+    error_message = "anyscale_platform_admin_role_assignments principal_type must be User, Group, ServicePrincipal, ForeignGroup, or Device."
+  }
+
+  validation {
+    condition = alltrue([for assignment in values(var.anyscale_platform_admin_role_assignments) : (
+      (try(trimspace(assignment.role_definition_id), "") != "") != (try(trimspace(assignment.role_definition_name), "") != "")
+    )])
+    error_message = "Each anyscale_platform_admin_role_assignments entry must set exactly one of role_definition_id or role_definition_name."
+  }
+
+  validation {
+    condition = alltrue([for assignment in values(var.anyscale_platform_admin_role_assignments) : (
+      try(trimspace(assignment.role_definition_id), "") == "" || can(regex("^/subscriptions/[0-9a-fA-F-]{36}/providers/Microsoft\\.Authorization/roleDefinitions/[0-9a-fA-F-]{36}$", assignment.role_definition_id))
+    )])
+    error_message = "anyscale_platform_admin_role_assignments role_definition_id values must be full subscription role definition IDs."
+  }
+}
+
+variable "anyscale_platform_default_admin_assignment" {
+  description = <<-EOT
+    Default Anyscale Platform Administrator assignment for the current Terraform principal.
+
+    This gives the deploying Entra principal org-owner-style Anyscale access by
+    assigning the built-in Anyscale Platform Administrator role at subscription
+    scope. Disable it or override the role/scope when running non-interactively.
+  EOT
+  type = object({
+    enabled              = optional(bool, true)
+    principal_type       = optional(string, "User")
+    role_definition_id   = optional(string)
+    role_definition_name = optional(string, "Anyscale Platform Administrator")
+    scope                = optional(string, "subscription")
+    custom_scope         = optional(string)
+  })
+  default = {}
+
+  validation {
+    condition     = contains(["User", "Group", "ServicePrincipal", "ForeignGroup", "Device"], var.anyscale_platform_default_admin_assignment.principal_type)
+    error_message = "anyscale_platform_default_admin_assignment.principal_type must be User, Group, ServicePrincipal, ForeignGroup, or Device."
+  }
+
+  validation {
+    condition     = contains(["subscription", "resource_group", "cloud", "custom"], var.anyscale_platform_default_admin_assignment.scope)
+    error_message = "anyscale_platform_default_admin_assignment.scope must be subscription, resource_group, cloud, or custom."
+  }
+
+  validation {
+    condition = !var.anyscale_platform_default_admin_assignment.enabled || (
+      (try(trimspace(var.anyscale_platform_default_admin_assignment.role_definition_id), "") != "") != (try(trimspace(var.anyscale_platform_default_admin_assignment.role_definition_name), "") != "")
+    )
+    error_message = "anyscale_platform_default_admin_assignment must set exactly one of role_definition_id or role_definition_name when enabled."
+  }
+
+  validation {
+    condition = (
+      var.anyscale_platform_default_admin_assignment.scope != "custom" ||
+      try(trimspace(var.anyscale_platform_default_admin_assignment.custom_scope), "") != ""
+    )
+    error_message = "anyscale_platform_default_admin_assignment.custom_scope must be set when scope is custom."
+  }
+}
+
+variable "anyscale_platform_role_assignments" {
+  description = <<-EOT
+    Azure RBAC role assignments for Anyscale Platform built-in roles.
+
+    Assign Anyscale Platform Administrator at subscription scope for default
+    org-owner-style console access. Assign Contributor or Reader at cloud or
+    narrower scopes for day-to-day users.
+  EOT
+  type = map(object({
+    principal_id         = string
+    principal_type       = optional(string, "User")
+    role_definition_id   = optional(string)
+    role_definition_name = optional(string)
+    scope                = optional(string, "cloud")
+    custom_scope         = optional(string)
+  }))
+  default = {}
+
+  validation {
+    condition     = alltrue([for assignment in values(var.anyscale_platform_role_assignments) : can(regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$", assignment.principal_id))])
+    error_message = "anyscale_platform_role_assignments principal_id values must be Entra object IDs."
+  }
+
+  validation {
+    condition     = alltrue([for assignment in values(var.anyscale_platform_role_assignments) : contains(["User", "Group", "ServicePrincipal", "ForeignGroup", "Device"], assignment.principal_type)])
+    error_message = "anyscale_platform_role_assignments principal_type must be User, Group, ServicePrincipal, ForeignGroup, or Device."
+  }
+
+  validation {
+    condition     = alltrue([for assignment in values(var.anyscale_platform_role_assignments) : contains(["subscription", "resource_group", "cloud", "custom"], assignment.scope)])
+    error_message = "anyscale_platform_role_assignments scope must be subscription, resource_group, cloud, or custom."
+  }
+
+  validation {
+    condition = alltrue([for assignment in values(var.anyscale_platform_role_assignments) : (
+      (try(trimspace(assignment.role_definition_id), "") != "") != (try(trimspace(assignment.role_definition_name), "") != "")
+    )])
+    error_message = "Each anyscale_platform_role_assignments entry must set exactly one of role_definition_id or role_definition_name."
+  }
+
+  validation {
+    condition = alltrue([for assignment in values(var.anyscale_platform_role_assignments) : (
+      try(trimspace(assignment.role_definition_id), "") == "" || can(regex("^/subscriptions/[0-9a-fA-F-]{36}/providers/Microsoft\\.Authorization/roleDefinitions/[0-9a-fA-F-]{36}$", assignment.role_definition_id))
+    )])
+    error_message = "anyscale_platform_role_assignments role_definition_id values must be full subscription role definition IDs."
+  }
+
+  validation {
+    condition = alltrue([for assignment in values(var.anyscale_platform_role_assignments) : (
+      assignment.scope != "custom" || try(trimspace(assignment.custom_scope), "") != ""
+    )])
+    error_message = "anyscale_platform_role_assignments custom_scope must be set when scope is custom."
+  }
+}

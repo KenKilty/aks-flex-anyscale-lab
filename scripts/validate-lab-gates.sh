@@ -240,7 +240,16 @@ check_m5() {
   pass "M5-01 CPU node pool autoscaling configured"
 
   gpu_config="${TF_VAR_gpu_pool_configs}"
-  if [[ "${gpu_config}" == "{}" ]]; then
+  if [[ "${ANYSCALE_FLEX_GPU_ENABLED:-false}" == "true" ]]; then
+    local flex_gpu_allocatable flex_gpu_ready_node_count
+    [[ "${TF_VAR_flex_host_enabled}" == "true" ]] || die "M5-02 Flex GPU path requires TF_VAR_flex_host_enabled=true"
+    az aks get-credentials --resource-group "${RG}" --name "${CLUSTER}" --overwrite-existing --only-show-errors >/dev/null
+    flex_gpu_ready_node_count="$(kubectl get nodes -l "agentpool=${AKS_FLEX_AGENT_POOL_NAME:-aksflexnodes}" -o json | jq '[.items[] | select((.status.conditions[]? | select(.type == "Ready" and .status == "True")))] | length')"
+    [[ "${flex_gpu_ready_node_count}" -ge 1 ]] || die "M5-02 Flex GPU pool ${AKS_FLEX_AGENT_POOL_NAME:-aksflexnodes} has no Ready nodes"
+    flex_gpu_allocatable="$(kubectl get nodes -l "agentpool=${AKS_FLEX_AGENT_POOL_NAME:-aksflexnodes}" -o json | jq '[.items[].status.allocatable["nvidia.com/gpu"]? // empty | tonumber] | add // 0')"
+    [[ "${flex_gpu_allocatable}" -ge 1 ]] || die "M5-02 Flex GPU pool ${AKS_FLEX_AGENT_POOL_NAME:-aksflexnodes} has no allocatable nvidia.com/gpu; use a GPU driver image and install the NVIDIA device plugin before running GPU proof"
+    pass "M5-02 Flex GPU node available with allocatable GPU"
+  elif [[ "${gpu_config}" == "{}" ]]; then
     skip "M5-02 GPU path disabled in current env profile"
   else
     local gpu_allocatable gpu_pool_name gpu_pool_state gpu_ready_node_count
@@ -250,7 +259,7 @@ check_m5() {
     [[ "${gpu_pool_state}" == "Succeeded" ]] || die "M5-02 GPU node pool ${gpu_pool_name} not ready: ${gpu_pool_state:-missing}"
     gpu_ready_node_count="$(kubectl get nodes -l "agentpool=${gpu_pool_name}" -o json | jq '[.items[] | select((.status.conditions[]? | select(.type == "Ready" and .status == "True")))] | length')"
     [[ "${gpu_ready_node_count}" -ge 1 ]] || die "M5-02 GPU node pool ${gpu_pool_name} has no Ready nodes"
-    gpu_allocatable="$(kubectl get nodes -l "agentpool=${gpu_pool_name}" -o json | jq '[.items[].status.allocatable["nvidia.com/gpu"]? | tonumber] | add // 0')"
+    gpu_allocatable="$(kubectl get nodes -l "agentpool=${gpu_pool_name}" -o json | jq '[.items[].status.allocatable["nvidia.com/gpu"]? // empty | tonumber] | add // 0')"
     [[ "${gpu_allocatable}" -ge 1 ]] || die "M5-02 GPU node pool ${gpu_pool_name} has no allocatable nvidia.com/gpu; install/repair NVIDIA device plugin and driver readiness before running GPU proof"
     pass "M5-02 GPU node pool available with allocatable GPU"
   fi
