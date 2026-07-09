@@ -76,7 +76,7 @@ This runs `terraform destroy -auto-approve` with the same variable profile used
 to deploy. Terraform handles the ordering defined by `depends_on` blocks. If the
 final resource-group delete is blocked by residual Azure-native Anyscale RP
 resources, the helper removes the remaining `Anyscale.Platform/clouds` resources and
-retries the destroy once.
+retries the destroy once. You should not need to delete those residuals manually.
 
 Expected duration: **10–20 minutes** (AKS cluster deletion is typically the longest step).
 

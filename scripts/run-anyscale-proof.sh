@@ -11,6 +11,7 @@ COMPUTE_CONFIG_DIR="${ARTIFACT_DIR}/compute-configs"
 VALIDATOR_SCRIPT="${ROOT_DIR}/workloads/deepspeed_finetune/validate_proof_summary.py"
 TIMEOUT_LIB="${ROOT_DIR}/scripts/lib/timeout.sh"
 SUBMIT_HELPER_LIB="${ROOT_DIR}/scripts/lib/anyscale-job-submit.sh"
+FLEX_NETWORK_GATES_LIB="${ROOT_DIR}/scripts/lib/flex-network-gates.sh"
 ANYSCALE_DEFAULT_HOST="https://console.azure.anyscale.com"
 ANYSCALE_CPU_IMAGE_DEFAULT="anyscale/ray:2.54.1-py311"
 ANYSCALE_GPU_IMAGE_DEFAULT="anyscale/ray:2.54.1-py311-cu121"
@@ -29,12 +30,13 @@ JOB_MAX_RETRIES="0"
 SUBMIT_TIMEOUT_SECONDS="300"
 ANYSCALE_EXTENSION_NAME="${ANYSCALE_EXTENSION_NAME:-anyscale-operator}"
 AKS_FLEX_AGENT_POOL_NAME="${AKS_FLEX_AGENT_POOL_NAME:-aksflexnodes}"
-FLEX_NODE_NAME=""
 
 # shellcheck source=./lib/timeout.sh
 source "${TIMEOUT_LIB}"
 # shellcheck source=./lib/anyscale-job-submit.sh
 source "${SUBMIT_HELPER_LIB}"
+# shellcheck source=./lib/flex-network-gates.sh
+source "${FLEX_NETWORK_GATES_LIB}"
 
 usage() {
   cat <<'EOF'
@@ -111,8 +113,8 @@ source_env() {
 
 load_names() {
   CLOUD_NAME="${TF_VAR_project}-${TF_VAR_environment}-${TF_VAR_region_short}"
-  RESOURCE_GROUP_NAME="rg-${TF_VAR_project}-${TF_VAR_environment}-${TF_VAR_region_short}"
-  CLUSTER_NAME="aks-${TF_VAR_project}-${TF_VAR_environment}-${TF_VAR_region_short}"
+  export RESOURCE_GROUP_NAME="rg-${TF_VAR_project}-${TF_VAR_environment}-${TF_VAR_region_short}"
+  export CLUSTER_NAME="aks-${TF_VAR_project}-${TF_VAR_environment}-${TF_VAR_region_short}"
   STORAGE_ACCOUNT="$(printf 'st%s%s%s' "${TF_VAR_project}" "${TF_VAR_environment}" "${TF_VAR_region_short}" | tr '[:upper:]' '[:lower:]' | cut -c1-24)"
   STORAGE_CONTAINER="${TF_VAR_project}-${TF_VAR_environment}-blob"
 }
@@ -149,219 +151,74 @@ resolve_gpu_pool_name() {
   jq -r 'to_entries[0].value.name // empty' <<<"${TF_VAR_gpu_pool_configs}"
 }
 
-anyscale_host_name() {
-  local host
-  host="${ANYSCALE_HOST#http://}"
-  host="${host#https://}"
-  printf '%s\n' "${host%%/*}"
-}
-
-check_anyscale_operator_ready() {
-  local ext_status_json
-  local provisioning_state
-  local install_message
-  local operator_status_json
-  local unhealthy_pods
-
-  ext_status_json="${ARTIFACT_DIR}/anyscale-extension-status-runtime.json"
-  operator_status_json="${ARTIFACT_DIR}/anyscale-operator-pods-runtime.json"
-
-  az k8s-extension show \
-    --cluster-type managedClusters \
-    --cluster-name "${CLUSTER_NAME}" \
-    --resource-group "${RESOURCE_GROUP_NAME}" \
-    --name "${ANYSCALE_EXTENSION_NAME}" \
-    -o json >"${ext_status_json}" 2>/dev/null || {
-    die "unable to read AKS extension status for ${ANYSCALE_EXTENSION_NAME} on ${CLUSTER_NAME}; validate cluster credentials and extension installation"
-  }
-
-  provisioning_state="$(jq -r '.provisioningState // empty' "${ext_status_json}")"
-  install_message="$(jq -r '.statuses[0].message // empty' "${ext_status_json}")"
-  if [[ "${provisioning_state}" != "Succeeded" ]]; then
-    die "Anyscale AKS extension ${ANYSCALE_EXTENSION_NAME} is ${provisioning_state:-unknown}. ${install_message:-No extension error message provided.}"
-  fi
-
-  need_cmd kubectl
-  kubectl -n "${TF_VAR_anyscale_operator_namespace}" get pods -l app=anyscale-operator -o json >"${operator_status_json}"
-  unhealthy_pods="$(jq -r '
-    [.items[]
-      | select(
-          .status.phase != "Running" or
-          ((.status.containerStatuses // []) | length) == 0 or
-          ([.status.containerStatuses[]? | select(.ready != true)] | length) > 0
-        )
-      | .metadata.name]
-    | join(",")' "${operator_status_json}")"
-
-  if [[ "$(jq -r '.items | length' "${operator_status_json}")" -lt 1 ]]; then
-    die "no anyscale-operator pods found in namespace ${TF_VAR_anyscale_operator_namespace}; operator is not ready"
-  fi
-  if [[ -n "${unhealthy_pods}" ]]; then
-    die "anyscale-operator pods are not 3/3 Running in namespace ${TF_VAR_anyscale_operator_namespace}: ${unhealthy_pods}"
-  fi
-}
-
-check_anyscale_gateway_ready() {
-  local gateway_status_json
-  local programmed_status
-  local gateway_address
-
-  need_cmd kubectl
-
-  gateway_status_json="${ARTIFACT_DIR}/anyscale-gateway-runtime.json"
-  kubectl -n "${TF_VAR_anyscale_operator_namespace}" get gateway "${TF_VAR_anyscale_gateway_name}" -o json >"${gateway_status_json}" || {
-    die "Gateway ${TF_VAR_anyscale_operator_namespace}/${TF_VAR_anyscale_gateway_name} is missing; operator gateway is not ready"
-  }
-
-  programmed_status="$(jq -r '[.status.conditions[]? | select(.type == "Programmed") | .status] | last // ""' "${gateway_status_json}")"
-  gateway_address="$(jq -r '.status.addresses[0].value // empty' "${gateway_status_json}")"
-
-  [[ "${programmed_status}" == "True" ]] || die "Gateway ${TF_VAR_anyscale_gateway_name} is not Programmed=True"
-  [[ -n "${gateway_address}" ]] || die "Gateway ${TF_VAR_anyscale_gateway_name} has no programmed address"
-  printf 'Gateway %s/%s programmed address: %s\n' "${TF_VAR_anyscale_operator_namespace}" "${TF_VAR_anyscale_gateway_name}" "${gateway_address}"
-}
-
-check_flex_nodes_ready() {
-  local node_json
-  local ready_count
-  local node_summary
-  local broadly_labeled_nodes
-
-  need_cmd kubectl
-
-  node_json="${ARTIFACT_DIR}/flex-node-preflight.json"
-  kubectl get nodes -o json >"${node_json}"
-
-  ready_count="$(jq -r \
-    --arg pool "${AKS_FLEX_AGENT_POOL_NAME}" \
-    --arg region "${TF_VAR_flex_region}" \
-    '[.items[]
-      | select((.metadata.labels.agentpool // .metadata.labels["kubernetes.azure.com/agentpool"] // "") == $pool)
-      | select((.metadata.labels["topology.kubernetes.io/region"] // .metadata.labels["failure-domain.beta.kubernetes.io/region"] // "") == $region)
-      | select(any(.status.conditions[]?; .type == "Ready" and .status == "True"))]
-      | length' "${node_json}")"
-
-  FLEX_NODE_NAME="$(jq -r \
-    --arg pool "${AKS_FLEX_AGENT_POOL_NAME}" \
-    --arg region "${TF_VAR_flex_region}" \
-    '[.items[]
-      | select((.metadata.labels.agentpool // .metadata.labels["kubernetes.azure.com/agentpool"] // "") == $pool)
-      | select((.metadata.labels["topology.kubernetes.io/region"] // .metadata.labels["failure-domain.beta.kubernetes.io/region"] // "") == $region)
-      | select(any(.status.conditions[]?; .type == "Ready" and .status == "True"))
-      | .metadata.name]
-      | first // ""' "${node_json}")"
-
-  if [[ "${ready_count}" -lt 1 ]]; then
-    node_summary="$(jq -r '
-      [.items[]
-        | {
-            name: .metadata.name,
-            pool: (.metadata.labels.agentpool // .metadata.labels["kubernetes.azure.com/agentpool"] // "unknown"),
-            region: (.metadata.labels["topology.kubernetes.io/region"] // .metadata.labels["failure-domain.beta.kubernetes.io/region"] // "unknown"),
-            ready: ([.status.conditions[]? | select(.type == "Ready") | .status] | first // "Unknown")
-          }]
-      | map("\(.name) pool=\(.pool) region=\(.region) ready=\(.ready)")
-      | join("; ")' "${node_json}")"
-    die "no Ready ${AKS_FLEX_AGENT_POOL_NAME} nodes found in ${TF_VAR_flex_region}; refusing to run CPU proof until flex capacity is joined. Current nodes: ${node_summary}"
-  fi
-
-  broadly_labeled_nodes="$(jq -r \
-    --arg pool "${AKS_FLEX_AGENT_POOL_NAME}" \
-    '[.items[]
-      | select((.metadata.labels.agentpool // .metadata.labels["kubernetes.azure.com/agentpool"] // "") == $pool)
-      | select(.metadata.labels["kubernetes.azure.com/cluster"] != null)
-      | .metadata.name]
-      | join(",")' "${node_json}")"
-  [[ -z "${broadly_labeled_nodes}" ]] || die "Flex node(s) carry broad kubernetes.azure.com/cluster label and may attract AKS-managed DaemonSets: ${broadly_labeled_nodes}"
-}
-
-check_kube_proxy_flex_ready() {
-  local daemonset_json
-  local desired ready
-
-  need_cmd kubectl
-
-  daemonset_json="${ARTIFACT_DIR}/kube-proxy-flex-runtime.json"
-  kubectl -n kube-system rollout status daemonset/kube-proxy-flex --timeout=60s >/dev/null
-  kubectl -n kube-system get daemonset kube-proxy-flex -o json >"${daemonset_json}"
-
-  desired="$(jq -r '.status.desiredNumberScheduled // 0' "${daemonset_json}")"
-  ready="$(jq -r '.status.numberReady // 0' "${daemonset_json}")"
-  [[ "${desired}" -ge 1 ]] || die "kube-proxy-flex has no desired pods; Flex service routing is not programmed"
-  [[ "${ready}" == "${desired}" ]] || die "kube-proxy-flex ready=${ready} desired=${desired}; Flex service routing is not ready"
-}
-
-check_flex_dns_routing_ready() {
-  local pod_name
-  local pod_log
-  local pod_describe
+check_cpu_proof_preflight() {
   local anyscale_dns_name
 
-  need_cmd kubectl
-
-  [[ -n "${FLEX_NODE_NAME}" ]] || die "internal error: FLEX_NODE_NAME is empty before DNS preflight"
-  anyscale_dns_name="$(anyscale_host_name)"
-  [[ -n "${anyscale_dns_name}" ]] || die "unable to determine Anyscale host name from ANYSCALE_HOST=${ANYSCALE_HOST}"
-
-  pod_name="dns-flex-proof-preflight-$(date +%s)"
-  pod_log="${ARTIFACT_DIR}/${pod_name}.log"
-  pod_describe="${ARTIFACT_DIR}/${pod_name}-describe.txt"
-
-  kubectl delete pod "${pod_name}" --ignore-not-found --wait=false >/dev/null 2>&1 || true
-  kubectl apply -f - <<EOF
-apiVersion: v1
-kind: Pod
-metadata:
-  name: ${pod_name}
-spec:
-  restartPolicy: Never
-  nodeSelector:
-    agentpool: ${AKS_FLEX_AGENT_POOL_NAME}
-  tolerations:
-    - key: aks-flex-node
-      operator: Equal
-      value: "true"
-      effect: NoSchedule
-  containers:
-    - name: dns-flex-debug
-      image: busybox:1.36
-      command:
-        - sh
-        - -c
-        - |
-          set -eu
-          cat /etc/resolv.conf
-          nslookup ${anyscale_dns_name}
-          nslookup kubernetes.default.svc.cluster.local
-          sleep 5
-EOF
-
-  if ! kubectl wait --for=condition=Ready "pod/${pod_name}" --timeout=180s >/dev/null; then
-    kubectl describe pod "${pod_name}" >"${pod_describe}" 2>&1 || true
-    kubectl logs "${pod_name}" --tail=120 >"${pod_log}" 2>&1 || true
-    kubectl delete pod "${pod_name}" --ignore-not-found --wait=false >/dev/null 2>&1 || true
-    die "Flex ClusterFirst DNS diagnostic pod did not become Ready (describe: ${pod_describe}, logs: ${pod_log})"
-  fi
-
-  kubectl logs "${pod_name}" --tail=120 >"${pod_log}"
-  if ! kubectl wait --for=jsonpath='{.status.phase}'=Succeeded "pod/${pod_name}" --timeout=60s >/dev/null; then
-    kubectl describe pod "${pod_name}" >"${pod_describe}" 2>&1 || true
-    kubectl delete pod "${pod_name}" --ignore-not-found --wait=false >/dev/null 2>&1 || true
-    die "Flex ClusterFirst DNS diagnostic pod did not complete successfully (describe: ${pod_describe}, logs: ${pod_log})"
-  fi
-
-  kubectl delete pod "${pod_name}" --ignore-not-found --wait=false >/dev/null 2>&1 || true
-  grep -q 'svc.cluster.local' "${pod_log}" || die "Flex diagnostic pod resolv.conf did not include cluster search domains (logs: ${pod_log})"
-  grep -q "${anyscale_dns_name}" "${pod_log}" || die "Flex diagnostic pod did not resolve ${anyscale_dns_name} (logs: ${pod_log})"
-  grep -q 'kubernetes.default.svc.cluster.local' "${pod_log}" || die "Flex diagnostic pod did not resolve kubernetes.default.svc.cluster.local (logs: ${pod_log})"
+  anyscale_dns_name="$(lab_gate_anyscale_host_name "${ANYSCALE_HOST}")"
+  lab_gate_flex_node_ready "${ARTIFACT_DIR}"
+  lab_gate_kube_proxy_flex_ready "${ARTIFACT_DIR}"
+  lab_gate_flex_dns_ready "${ARTIFACT_DIR}" "${anyscale_dns_name}"
+  lab_gate_flex_https_egress "${ARTIFACT_DIR}" "${anyscale_dns_name}"
+  lab_gate_aks_to_flex_line_of_sight "${ARTIFACT_DIR}"
+  lab_gate_anyscale_operator_ready "${ARTIFACT_DIR}"
+  lab_gate_anyscale_gateway_ready "${ARTIFACT_DIR}"
 }
 
-check_cpu_proof_preflight() {
-  check_flex_nodes_ready
-  check_kube_proxy_flex_ready
-  check_flex_dns_routing_ready
-  check_anyscale_operator_ready
-  check_anyscale_gateway_ready
+collect_kubernetes_placement_evidence() {
+  local job_name="$1"
+  local mode="$2"
+  local pods_json nodes_json placement_file
+
+  pods_json="${ARTIFACT_DIR}/proofs/${job_name}-kubernetes-pods.raw.json"
+  nodes_json="${ARTIFACT_DIR}/proofs/${job_name}-kubernetes-nodes.raw.json"
+  placement_file="${ARTIFACT_DIR}/proofs/${job_name}-kubernetes-placement.json"
+
+  kubectl -n "${TF_VAR_anyscale_operator_namespace}" get pods \
+    -l "app.kubernetes.io/name=${job_name}" \
+    -o json >"${pods_json}"
+  kubectl get nodes -o json >"${nodes_json}"
+
+  jq -n \
+    --arg job_name "${job_name}" \
+    --arg namespace "${TF_VAR_anyscale_operator_namespace}" \
+    --slurpfile pods "${pods_json}" \
+    --slurpfile nodes "${nodes_json}" \
+    '($nodes[0].items
+      | map({
+          key: .metadata.name,
+          value: {
+            region: (.metadata.labels["topology.kubernetes.io/region"] // .metadata.labels["failure-domain.beta.kubernetes.io/region"] // "unknown"),
+            agentpool: (.metadata.labels.agentpool // .metadata.labels["kubernetes.azure.com/agentpool"] // "unknown")
+          }
+        })
+      | from_entries) as $node_by_name
+    | {
+        job_name: $job_name,
+        namespace: $namespace,
+        pods: [
+          $pods[0].items[]
+          | {
+              name: .metadata.name,
+              pod_ip: (.status.podIP // ""),
+              node_name: (.spec.nodeName // ""),
+              node_region: ($node_by_name[.spec.nodeName].region // "unknown"),
+              node_agentpool: ($node_by_name[.spec.nodeName].agentpool // "unknown"),
+              phase: (.status.phase // "unknown"),
+              ray_node_type: (.metadata.labels["ray-node-type"] // ""),
+              anyscale_node_group: (.metadata.labels["anyscale-node-group-id"] // ""),
+              containers_ready: ([.status.containerStatuses[]? | select(.ready != true)] | length == 0)
+            }
+        ]
+      }' >"${placement_file}"
+
+  jq -e '.pods | length > 0' "${placement_file}" >/dev/null || die "no Kubernetes placement pods found for ${job_name}"
+  if [[ "${mode}" == "cpu" ]]; then
+    jq -e --arg region "${TF_VAR_flex_region}" \
+      '.pods[] | select(.ray_node_type == "worker" and .node_region == $region)' \
+      "${placement_file}" >/dev/null || die "no CPU proof worker pod placed in Flex region ${TF_VAR_flex_region} (placement: ${placement_file})"
+  fi
+
+  printf '%s\n' "${placement_file}"
 }
 
 write_compute_config() {
@@ -444,6 +301,7 @@ extract_and_validate_logged_proof() {
   local mode="$2"
   local logs_file="$3"
   local expected_worker_region
+  local placement_file
   local remote_summary
 
   remote_summary="${ARTIFACT_DIR}/proofs/${job_name}-proof-summary.json"
@@ -481,16 +339,19 @@ PY
   fi
 
   python3 "${VALIDATOR_SCRIPT}" "${remote_summary}" --expected-worker-region "${expected_worker_region}" >/dev/null
+  placement_file="$(collect_kubernetes_placement_evidence "${job_name}" "${mode}")"
 
   jq -n \
     --arg mode "${mode}" \
     --arg job_name "${job_name}" \
     --arg remote_summary "${remote_summary}" \
+    --arg placement_file "${placement_file}" \
     --arg logs_file "${logs_file}" \
     '{
       mode: $mode,
       job_name: $job_name,
       proof_summary_file: $remote_summary,
+      kubernetes_placement_file: $placement_file,
       source_logs_file: $logs_file,
       validated: true
     }' >"${STATE_DIR}/anyscale-proof-${mode}.json"

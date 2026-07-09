@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC2154
+# shellcheck disable=SC1091,SC2154
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_FILE="${ANYSCALE_AKS_ENV_FILE:-${ROOT_DIR}/.env}"
 STATE_DIR="${ROOT_DIR}/.github/agents/state"
+FLEX_NETWORK_GATES_LIB="${ROOT_DIR}/scripts/lib/flex-network-gates.sh"
+
+# shellcheck source=./lib/flex-network-gates.sh
+source "${FLEX_NETWORK_GATES_LIB}"
 
 die() {
   printf 'error: %s\n' "$1" >&2
@@ -228,7 +232,7 @@ check_m4() {
 check_m5() {
   print_section "Module 5 gates"
 
-  local autoscale_enabled cpu_max gpu_config
+  local autoscale_enabled cpu_max gpu_config anyscale_host_name artifact_dir
   autoscale_enabled="$(az aks nodepool show --resource-group "${RG}" --cluster-name "${CLUSTER}" --name cpu --query enableAutoScaling -o tsv 2>/dev/null || true)"
   cpu_max="$(az aks nodepool show --resource-group "${RG}" --cluster-name "${CLUSTER}" --name cpu --query maxCount -o tsv 2>/dev/null || true)"
   [[ "${autoscale_enabled}" == "true" ]] || die "M5-01 CPU node pool autoscaling disabled"
@@ -238,15 +242,31 @@ check_m5() {
   gpu_config="${TF_VAR_gpu_pool_configs}"
   if [[ "${gpu_config}" == "{}" ]]; then
     skip "M5-02 GPU path disabled in current env profile"
+  else
+    local gpu_pool_name gpu_pool_state
+    gpu_pool_name="$(resolve_gpu_pool_name)"
+    [[ -n "${gpu_pool_name}" ]] || die "M5-02 unable to determine GPU pool name from TF_VAR_gpu_pool_configs"
+    gpu_pool_state="$(az aks nodepool show --resource-group "${RG}" --cluster-name "${CLUSTER}" --name "${gpu_pool_name}" --query provisioningState -o tsv 2>/dev/null || true)"
+    [[ "${gpu_pool_state}" == "Succeeded" ]] || die "M5-02 GPU node pool ${gpu_pool_name} not ready: ${gpu_pool_state:-missing}"
+    pass "M5-02 GPU node pool available"
+  fi
+
+  if [[ "${TF_VAR_flex_host_enabled}" != "true" ]]; then
+    skip "M5-03 Flex network checks skipped because Flex host is disabled"
     return 0
   fi
 
-  local gpu_pool_name gpu_pool_state
-  gpu_pool_name="$(resolve_gpu_pool_name)"
-  [[ -n "${gpu_pool_name}" ]] || die "M5-02 unable to determine GPU pool name from TF_VAR_gpu_pool_configs"
-  gpu_pool_state="$(az aks nodepool show --resource-group "${RG}" --cluster-name "${CLUSTER}" --name "${gpu_pool_name}" --query provisioningState -o tsv 2>/dev/null || true)"
-  [[ "${gpu_pool_state}" == "Succeeded" ]] || die "M5-02 GPU node pool ${gpu_pool_name} not ready: ${gpu_pool_state:-missing}"
-  pass "M5-02 GPU node pool available"
+  az aks get-credentials --resource-group "${RG}" --name "${CLUSTER}" --overwrite-existing --only-show-errors >/dev/null
+  artifact_dir="${STATE_DIR}/m5-flex-network"
+  anyscale_host_name="$(lab_gate_anyscale_host_name "${TF_VAR_anyscale_control_plane_url:-${ANYSCALE_HOST:-https://console.azure.anyscale.com}}")"
+
+  lab_gate_flex_node_ready "${artifact_dir}"
+  lab_gate_kube_proxy_flex_ready "${artifact_dir}"
+  lab_gate_flex_dns_ready "${artifact_dir}" "${anyscale_host_name}"
+  lab_gate_flex_https_egress "${artifact_dir}" "${anyscale_host_name}"
+  lab_gate_aks_to_flex_line_of_sight "${artifact_dir}"
+  lab_gate_anyscale_operator_ready "${artifact_dir}"
+  lab_gate_anyscale_gateway_ready "${artifact_dir}"
 }
 
 check_m6_local() {
@@ -293,6 +313,7 @@ main() {
 
   need_cmd az
   need_cmd kubectl
+  need_cmd jq
   need_cmd python3
   source_env
   load_names

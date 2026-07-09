@@ -97,89 +97,39 @@ Expected output:
 Apply complete! Resources: 0 added, 1 changed, 0 destroyed.
 ```
 
-## Step 4 — Re-run Flex and service-routing gates
+## Step 4 — Run the final preflight gates
+
+Use the gate script instead of pasting long diagnostic pods by hand. It checks the
+CPU scale profile, optional GPU pool setting, Flex node readiness, Flex service
+routing, Flex DNS, Flex HTTPS egress, AKS-to-Flex pod reachability, and the
+Anyscale extension/Gateway path.
 
 ```bash
-source .env
-FLEX_NODE="vm-flex-${TF_VAR_project}-${TF_VAR_environment}-${TF_VAR_flex_region_short}"
-kubectl get node "$FLEX_NODE" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}{"\n"}'
-kubectl -n kube-system rollout status ds/kube-proxy-flex --timeout=3m
-kubectl get pods -A -o wide --field-selector spec.nodeName="$FLEX_NODE"
+./scripts/validate-lab-gates.sh m5
 ```
 
 Expected output:
 
 ```text
-True
-daemon set "kube-proxy-flex" successfully rolled out
-NAMESPACE     NAME                    READY   STATUS    NODE
-kube-system   kube-proxy-flex-abcde   1/1     Running   vm-flex-flexany-dev-wus3
+PASS M5-01 CPU node pool autoscaling configured
+SKIP M5-02 GPU path disabled in current env profile
+PASS Flex node vm-flex-flexany-dev-wus3 Ready in westus3
+PASS kube-proxy-flex ready 1/1
+PASS Flex ClusterFirst DNS resolves Anyscale and Kubernetes service names
+PASS Flex pod HTTPS egress reaches console.azure.anyscale.com
+PASS AKS pod reached Flex pod 10.244.0.36:8080
+PASS Anyscale extension and operator pods ready
+PASS Gateway anyscale-operator/anyscale-gateway programmed at 20.190.18.76
 ```
 
-## Step 5 — Re-run ClusterFirst DNS diagnostic
+The helper writes raw pod logs and Kubernetes JSON under
+`.github/agents/state/m5-flex-network/`. If a check fails, use that directory first;
+it contains the short-lived diagnostic pod output before cleanup.
 
-```bash
-kubectl run dns-flex-debug \
-  --restart=Never \
-  --image=busybox:1.36 \
-  --overrides='{"apiVersion":"v1","spec":{"nodeSelector":{"agentpool":"aksflexnodes"},"tolerations":[{"key":"aks-flex-node","operator":"Equal","value":"true","effect":"NoSchedule"}],"containers":[{"name":"dns-flex-debug","image":"busybox:1.36","command":["sh","-c","cat /etc/resolv.conf; nslookup console.azure.anyscale.com; nslookup kubernetes.default.svc.cluster.local; sleep 5"]}]}}'
-kubectl wait --for=condition=Ready pod/dns-flex-debug --timeout=180s
-kubectl logs dns-flex-debug --tail=120
-kubectl delete pod dns-flex-debug --ignore-not-found
-```
+## Step 5 — Inspect Anyscale extension and Gateway health
 
-Expected output:
-
-```text
-pod/dns-flex-debug condition met
-nameserver 10.0.0.10
-Name:      console.azure.anyscale.com
-Address 1: 20.42.10.25
-Name:      kubernetes.default.svc.cluster.local
-Address 1: 10.0.0.1
-pod "dns-flex-debug" deleted
-```
-
-## Step 6 — Prove Flex pod egress and AKS-to-Flex pod line-of-sight
-
-DNS success from a Flex pod is necessary but not sufficient. Before running the
-Anyscale proof, also verify that a Flex pod can serve traffic on its pod IP and an
-AKS CPU-pool pod can reach it through the AKS subnet route to `TF_VAR_flex_pod_cidr`.
-
-```bash
-kubectl run flex-egress-debug \
-  --restart=Never \
-  --image=curlimages/curl:8.10.1 \
-  --overrides='{"apiVersion":"v1","spec":{"nodeSelector":{"agentpool":"aksflexnodes"},"tolerations":[{"key":"aks-flex-node","operator":"Equal","value":"true","effect":"NoSchedule"}]}}' \
-  --command -- sh -c 'curl -fsSI https://console.azure.anyscale.com >/dev/null && echo flex-egress-ok'
-kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/flex-egress-debug --timeout=5m
-kubectl logs flex-egress-debug
-
-kubectl run flex-route-server \
-  --restart=Never \
-  --image=busybox:1.36 \
-  --overrides='{"apiVersion":"v1","spec":{"nodeSelector":{"agentpool":"aksflexnodes"},"tolerations":[{"key":"aks-flex-node","operator":"Equal","value":"true","effect":"NoSchedule"}],"containers":[{"name":"server","image":"busybox:1.36","command":["sh","-c","mkdir -p /www && echo flex-route-ok > /www/index.html && httpd -f -p 8080 -h /www"]}]}}'
-kubectl wait --for=condition=Ready pod/flex-route-server --timeout=180s
-FLEX_POD_IP="$(kubectl get pod flex-route-server -o jsonpath='{.status.podIP}')"
-
-kubectl run aks-to-flex-client \
-  --restart=Never \
-  --image=curlimages/curl:8.10.1 \
-  --overrides='{"apiVersion":"v1","spec":{"nodeSelector":{"agentpool":"cpu"}}}' \
-  --command -- sh -c "curl -fsS http://${FLEX_POD_IP}:8080"
-kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/aks-to-flex-client --timeout=10m
-kubectl logs aks-to-flex-client
-kubectl delete pod flex-egress-debug flex-route-server aks-to-flex-client --ignore-not-found
-```
-
-Expected output:
-
-```text
-flex-egress-ok
-flex-route-ok
-```
-
-## Step 7 — Confirm Anyscale extension and Gateway health
+The gate script already checked this. Use these commands when you want the raw
+extension and Gateway details.
 
 ```bash
 az k8s-extension show \
@@ -190,7 +140,6 @@ az k8s-extension show \
   --query '{name:name,provisioningState:provisioningState,currentVersion:currentVersion}' -o json
 
 kubectl get pods,gateway -n anyscale-operator -o wide
-kubectl get gateway anyscale-gateway -n anyscale-operator -o jsonpath='{.status.conditions}'
 ```
 
 Expected output:
@@ -204,8 +153,6 @@ Expected output:
 
 pod/anyscale-operator-556c4df7cb-tq4r7   3/3   Running
 gateway.gateway.networking.k8s.io/anyscale-gateway   approuting-istio   20.190.18.76   True
-
-[{"type":"Programmed","status":"True","reason":"Programmed"}]
 ```
 
 :::warning Stop before Gate 5
@@ -214,7 +161,7 @@ capacity, Flex-only service routing, ClusterFirst DNS, and Anyscale Gateway API 
 already healthy.
 :::
 
-## Step 8 — Confirm no stale proof pods are active
+## Step 6 — Confirm no stale proof pods are active
 
 ```bash
 kubectl get pods -A -o wide --field-selector spec.nodeName="$FLEX_NODE"

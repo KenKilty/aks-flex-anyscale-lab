@@ -153,6 +153,8 @@ k-flex-proof-cpu-worker-group-0-fghij    1/1     Running   vm-flex-flexany-dev-w
 For local smoke runs, the summary is written locally under `.cache/workloads/...`.
 For Anyscale job runs, `./scripts/run-anyscale-proof.sh` extracts the
 `PROOF_SUMMARY_JSON` log record and writes it under `.cache/anyscale/proofs/`.
+It also writes Kubernetes placement evidence for the job, including pod IP, node,
+node region, node pool, and Ray node type.
 The workload also writes and reads the same summary through the Anyscale workload
 managed identity using the fsspec/adlfs `az://` protocol; no SAS token or shared
 storage key is used.
@@ -206,6 +208,8 @@ Open the proof summary and check the `placement` and `storage_proof` sections:
 
 ```bash
 jq '{placement, storage_proof}' .cache/anyscale/proofs/<proof-name>-proof-summary.json
+jq '.pods[] | {name, pod_ip, node_name, node_region, node_agentpool, ray_node_type}' \
+  .cache/anyscale/proofs/<proof-name>-kubernetes-placement.json
 ```
 
 Expected output:
@@ -220,6 +224,14 @@ Expected output:
     "client_id_present": true,
     "uri": "az://..."
   }
+}
+{
+  "name": "k-flex-proof-cpu-worker-group-0-fghij",
+  "pod_ip": "10.244.0.36",
+  "node_name": "vm-flex-flexany-dev-wus3",
+  "node_region": "westus3",
+  "node_agentpool": "aksflexnodes",
+  "ray_node_type": "worker"
 }
 ```
 
@@ -252,6 +264,7 @@ k-be9e65e2681b30000   5/5   Running   10.244.0.36   vm-flex-flexany-dev-wus3   .
 ```
 
 The proof validator also checks that the remote CPU worker summary reports the Flex
+region, and the harness checks that a Kubernetes worker pod lands in the Flex
 region. A stale or globally injected home-region hint should fail validation rather
 than being accepted as placement evidence.
 

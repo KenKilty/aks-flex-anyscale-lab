@@ -114,6 +114,17 @@ Flex NSG forwarded-traffic rules, and enables NIC IP forwarding when
 `TF_VAR_flex_host_enabled="true"`.
 :::
 
+The traffic model is simple:
+
+| Traffic | Path |
+| -------- | ---- |
+| AKS pod to Flex pod | AKS subnet route sends `TF_VAR_flex_pod_cidr` to the Flex host primary IP |
+| Flex pod to AKS pod/service | Flex host forwards without NAT for AKS VNet destinations |
+| Flex pod to internet/Anyscale | Flex host SNATs outbound traffic through its primary interface |
+
+The secondary NIC IPs provide pod IP capacity on the host. The workload pod IPs you
+observe later still come from `TF_VAR_flex_pod_cidr`.
+
 Validate the Flex NIC pod IP capacity after apply:
 
 ```bash
