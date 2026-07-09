@@ -34,8 +34,8 @@ Destroying resources out of order causes Azure API conflicts (for example, delet
 the VNet before the Flex host is unjoined, or destroying the AKS cluster before the
 Anyscale cloud is de-registered). The correct order is:
 
-1. Drain and stop active Anyscale jobs and workspaces
-2. Delete the Anyscale cloud registration (before extension and AKS cluster)
+1. Drain and stop active Anyscale jobs
+2. Delete the current lab's Azure-native Anyscale cloud resource before extension and AKS cluster teardown
 3. Remove Flex host RBAC and unjoin the host
 4. Destroy Terraform-managed infrastructure (extension → cluster → networking → storage)
 5. Verify residual resource check
@@ -84,10 +84,10 @@ Expected output:
 
 ```text
 azurerm_kubernetes_cluster_extension.anyscale_operator: Destruction complete
-azapi_resource.anyscale_cloud: Destruction complete
+azapi_resource.anyscale_platform[0]: Destruction complete
 azurerm_kubernetes_cluster.aks: Destruction complete
-azurerm_resource_group.main: Destruction complete
-Destroy complete! Resources: 62 destroyed.
+azurerm_resource_group.this: Destruction complete
+Destroy complete!
 ```
 
 :::warning Transient Azure errors during destroy
@@ -104,6 +104,15 @@ calling the Anyscale RP delete API for those residuals before retrying the final
 resource-group delete.
 :::
 
+:::info Stale Anyscale console entries
+The Azure Anyscale CLI does not support `anyscale cloud delete` for Azure clouds.
+If the Azure resource group and `Anyscale.Platform/clouds` ARM resource are gone
+but the Anyscale console still lists an old cloud with no resources, treat it as a
+stale control-plane registration and ask your Anyscale/Azure provider contact to
+remove it. Do not keep retrying Terraform or Azure Portal deletes for a cloud that
+no longer exists in Azure ARM.
+:::
+
 ## Step 3 — Verify residual resources
 
 After destroy completes:
@@ -116,9 +125,8 @@ After destroy completes:
 Expected output:
 
 ```text
-PASS resource group rg-flexany-dev-wus2 deleted
-PASS terraform state empty
-PASS no Anyscale proof pods remain
+PASS M7-01 resource group deleted
+PASS M7-02 terraform state empty
 ```
 
 If you want to inspect the underlying values directly, derive them from `.env`:
@@ -149,7 +157,7 @@ Run destroy a second time to confirm it is a no-op:
 Expected output ends with:
 
 ```text
-Apply complete! Resources: 0 added, 0 changed, 0 destroyed.
+No changes. No objects need to be destroyed.
 ```
 
 ## Evidence bundle
@@ -201,8 +209,8 @@ safe and idempotent — Terraform will create only the resources that do not exi
 You have completed the full lab:
 
 - Deployed a public AKS cluster in `westus2` with Terraform
-- Attached a CPU Flex host from `westus3`
+- Attached a Flex host from another Azure region
 - Bound Azure-native Anyscale through AzAPI, the AKS operator extension, and Gateway API
-- Ran the CPU-only proof workload across both locations
-- Produced machine-readable placement evidence
+- Ran CPU and optional GPU proof workloads across both locations
+- Produced machine-readable placement evidence proving workers ran on the Flex node
 - Torn down all resources cleanly and verified idempotency

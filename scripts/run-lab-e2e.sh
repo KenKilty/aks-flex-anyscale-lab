@@ -126,6 +126,9 @@ phase_anyscale() {
 }
 
 phase_autoscale() {
+  if [[ "${ANYSCALE_FLEX_GPU_ENABLED:-false}" == "true" || "${TF_VAR_gpu_pool_configs}" != "{}" ]]; then
+    run_step "Module 5 NVIDIA device plugin" "${ROOT_DIR}/scripts/install-nvidia-device-plugin.sh"
+  fi
   run_step "Module 5 gate" "${GATE_SCRIPT}" m5
 }
 

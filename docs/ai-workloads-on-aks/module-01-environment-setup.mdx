@@ -1,6 +1,6 @@
 ---
 title: "Module 1 — Environment Setup and Feasibility Gate"
-description: Install tooling, authenticate to Azure, check CPU quota for the westus2 AKS and westus3 Flex path, and confirm the lab is ready to proceed.
+description: Install tooling, authenticate to Azure, choose the CPU or GPU path, check quota, and confirm the lab is ready to proceed.
 sidebar_position: 2
 sidebar_label: "Module 1 — Environment Setup"
 tags:
@@ -12,9 +12,9 @@ tags:
 
 import Prerequisites from "../../src/components/SharedMarkdown/_prerequisites.mdx";
 
-This module gets your workstation ready, verifies that Azure quota exists for the
-CPU-first westus2/westus3 path, and produces an environment check report that gates
-entry to the remaining modules.
+This module gets your workstation ready, verifies that Azure quota exists for your
+chosen CPU or GPU path, and produces an environment check report that gates entry
+to the remaining modules.
 
 ## Objectives
 
@@ -22,7 +22,7 @@ By the end of this module you will be able to:
 
 - Verify all required CLI tools are installed and authenticated
 - Confirm CPU quota in both regions (home and Flex)
-- Keep GPU as an optional future path, not the primary workshop route
+- Decide whether to run the CPU path or the T4 GPU Flex path
 - Create and populate your local `.env` file
 
 ## Regional Prerequisites
@@ -32,10 +32,15 @@ This lab uses a **two-region architecture** to demonstrate hybrid AKS + Flex Nod
 - **Home region (AKS cluster)**: Must support the Anyscale operator AKS extension
 - **Flex region (Flex host)**: Must have reachable network capacity for the Flex VM and proof worker
 
-**Recommended configuration for this lab:**
+**Recommended CPU configuration for this lab:**
 
 - **Home: West US 2 (westus2)** — Public AKS cluster, storage, ACR, and Anyscale operator extension
 - **Flex: West US 3 (westus3)** — Flex host joined as an external AKS node
+
+**Validated GPU configuration:**
+
+- **Home: West US 2 (westus2)** — Public AKS cluster and Anyscale cloud binding
+- **Flex: South Central US (southcentralus)** — `Standard_NC16as_T4_v3` Flex host when T4 capacity is unavailable in `westus3`
 
 **Why this pair?**
 
@@ -134,14 +139,14 @@ Standard DSv5 Family 0               20
 You need at least **4 vCPU available** in each region for the CPU proof. The reference
 profile uses `Standard_D4s_v5` for the Flex host and AKS CPU capacity.
 
-### Optional future GPU path (Standard NCASv3_T4 family)
+### GPU path (Standard NCASv3_T4 family)
 
 ```bash
-az vm list-usage --location westus2 \
+az vm list-usage --location westus3 \
   --query "[?name.value=='standardNCASv3_T4Family']" \
   -o table
 
-az vm list-usage --location westus3 \
+az vm list-usage --location southcentralus \
   --query "[?name.value=='standardNCASv3_T4Family']" \
   -o table
 ```
@@ -154,7 +159,9 @@ Name                        CurrentValue    Limit
 Standard NCASv3_T4 Family   0               0
 ```
 
-GPU quota is not required for the organized path in this workshop.
+GPU quota is not required for the CPU path. If `westus3` has no T4 quota or SKU
+availability, use `southcentralus` for the GPU Flex region and update
+`TF_VAR_flex_region` plus `TF_VAR_flex_region_short` before deploying Module 2.
 
 :::tip Quota increase
 If your CPU quota is low, request an increase at
@@ -166,10 +173,10 @@ before continuing. GPU quota can be requested later if you want to extend the la
 
 | Step | CPU path | GPU path |
 | --- | --- | --- |
-| Module sequence | Primary path for this workshop | Future optional extension |
-| AKS home region | `westus2` | Must be revalidated for extension and GPU quota |
-| Flex region | `westus3` | Must be revalidated for GPU host quota |
-| Proof workload | CPU-only Ray proof on Flex | GPU-enabled Ray proof on Flex after the CPU gate passes |
+| Module sequence | Lowest-cost repeatable path | GPU proof path |
+| AKS home region | `westus2` | Must support the Anyscale AKS extension |
+| Flex region | `westus3` | `southcentralus` in the validated T4 run |
+| Proof workload | CPU-only Ray proof on Flex | `GPU:1` Ray worker on the Flex T4 host |
 
 Record the organized path in `.env`:
 
@@ -179,6 +186,20 @@ TF_VAR_region_short="wus2"
 TF_VAR_flex_region="westus3"
 TF_VAR_flex_region_short="wus3"
 TF_VAR_gpu_pool_configs='{}'
+```
+
+For the validated GPU path, use:
+
+```bash
+TF_VAR_flex_region="southcentralus"
+TF_VAR_flex_region_short="scus"
+TF_VAR_flex_host_vm_size="Standard_NC16as_T4_v3"
+TF_VAR_flex_host_source_image_reference='{"publisher":"microsoft-dsvm","offer":"ubuntu-hpc","sku":"2204","version":"latest"}'
+ANYSCALE_FLEX_GPU_ENABLED="true"
+ANYSCALE_PROOF_GPU_ACCELERATOR_TYPE="T4"
+ANYSCALE_PROOF_GPU_PRODUCT_LABEL="NVIDIA-T4"
+ANYSCALE_PROOF_GPU_TARGET="flex"
+ANYSCALE_PROOF_GPU_WORKER_COUNT="1"
 ```
 
 :::note Gate 0: no proof runs yet

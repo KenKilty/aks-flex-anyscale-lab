@@ -70,6 +70,90 @@ capture_m4_artifacts() {
   fi
 }
 
+resolve_anyscale_platform_role_name() {
+  case "$1" in
+  "Anyscale Platform Administrator")
+    printf 'Anyscale Platform Administrator Role'
+    ;;
+  "Anyscale Platform Contributor")
+    printf 'Anyscale Platform Contributor Role'
+    ;;
+  "Anyscale Platform Reader")
+    printf 'Anyscale Platform Reader Role'
+    ;;
+  *)
+    printf '%s' "$1"
+    ;;
+  esac
+}
+
+resolve_current_principal_object_id() {
+  local account_user account_type object_id
+
+  account_type="$(az account show --query 'user.type' -o tsv 2>/dev/null || true)"
+  account_user="$(az account show --query 'user.name' -o tsv 2>/dev/null || true)"
+  object_id=""
+
+  if [[ "${account_type}" == "user" ]]; then
+    object_id="$(az ad signed-in-user show --query id -o tsv 2>/dev/null || true)"
+  elif [[ -n "${account_user}" ]]; then
+    object_id="$(az ad sp show --id "${account_user}" --query id -o tsv 2>/dev/null || true)"
+  fi
+
+  [[ -n "${object_id}" ]] || die "unable to resolve current Azure principal object id for Anyscale Platform RBAC gate"
+  printf '%s' "${object_id}"
+}
+
+check_anyscale_platform_current_principal_rbac() {
+  local config enabled role_name effective_role_name scope_key custom_scope effective_scope principal_id artifact_file assignment_count
+
+  if [[ "${TF_VAR_anyscale_enabled}" != "true" ]]; then
+    return 0
+  fi
+
+  config="${TF_VAR_anyscale_platform_default_admin_assignment:-{}}"
+  enabled="$(jq -r '.enabled // true' <<<"${config}")"
+  if [[ "${enabled}" != "true" ]]; then
+    skip "M4-04 current-principal Anyscale Platform RBAC gate disabled"
+    return 0
+  fi
+
+  role_name="$(jq -r '.role_definition_name // "Anyscale Platform Administrator"' <<<"${config}")"
+  effective_role_name="$(resolve_anyscale_platform_role_name "${role_name}")"
+  scope_key="$(jq -r '.scope // "subscription"' <<<"${config}")"
+  custom_scope="$(jq -r '.custom_scope // empty' <<<"${config}")"
+
+  case "${scope_key}" in
+  subscription)
+    effective_scope="/subscriptions/${TF_VAR_azure_subscription_id}"
+    ;;
+  resource_group)
+    effective_scope="/subscriptions/${TF_VAR_azure_subscription_id}/resourceGroups/${RG}"
+    ;;
+  cloud)
+    effective_scope="/subscriptions/${TF_VAR_azure_subscription_id}/resourceGroups/${RG}/providers/Anyscale.Platform/clouds/${PROJECT}-${ENVIRONMENT}-${REGION_SHORT}"
+    ;;
+  custom)
+    [[ -n "${custom_scope}" ]] || die "M4-04 custom Anyscale Platform RBAC scope requires custom_scope"
+    effective_scope="${custom_scope}"
+    ;;
+  *)
+    die "M4-04 unsupported Anyscale Platform RBAC scope: ${scope_key}"
+    ;;
+  esac
+
+  principal_id="$(resolve_current_principal_object_id)"
+  artifact_file="${STATE_DIR}/m4-anyscale-platform-rbac.json"
+  mkdir -p "${STATE_DIR}"
+  az role assignment list \
+    --assignee "${principal_id}" \
+    --scope "${effective_scope}" \
+    -o json >"${artifact_file}"
+  assignment_count="$(jq --arg role "${effective_role_name}" '[.[] | select(.roleDefinitionName == $role)] | length' "${artifact_file}")"
+  [[ "${assignment_count}" -ge 1 ]] || die "M4-04 missing ${effective_role_name} for current principal ${principal_id} at ${effective_scope} (details: ${artifact_file})"
+  pass "M4-04 current principal has ${effective_role_name} at ${scope_key} scope"
+}
+
 check_m2() {
   print_section "Module 2 gates"
 
@@ -227,6 +311,8 @@ check_m4() {
     die "M4-03 unhealthy Anyscale operator pods detected (logs: ${STATE_DIR}/m4-operator-logs.txt)"
   fi
   pass "M4-03 operator pods healthy"
+
+  check_anyscale_platform_current_principal_rbac
 }
 
 check_m5() {

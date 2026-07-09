@@ -224,6 +224,7 @@ resource "azurerm_kubernetes_cluster_extension" "anyscale_operator" {
 
   depends_on = [
     azapi_resource.anyscale_platform,
+    azurerm_role_assignment.anyscale_platform,
     module.aks.aks_provisioning_validation,
   ]
 }

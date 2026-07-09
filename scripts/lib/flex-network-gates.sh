@@ -22,6 +22,21 @@ lab_gate_artifact_dir() {
   mkdir -p "${artifact_dir}"
 }
 
+lab_gate_collect_pod_logs() {
+  local pod_name="$1"
+  local pod_log="$2"
+  local attempt
+
+  for attempt in {1..5}; do
+    if kubectl logs "${pod_name}" --tail=120 >"${pod_log}" 2>&1; then
+      return 0
+    fi
+    sleep 3
+  done
+
+  return 1
+}
+
 lab_gate_anyscale_host_name() {
   local host="${1:-${ANYSCALE_HOST:-https://console.azure.anyscale.com}}"
   host="${host#http://}"
@@ -220,19 +235,19 @@ EOF
 
   if ! kubectl wait --for=condition=Ready "pod/${pod_name}" --timeout=180s >/dev/null; then
     kubectl describe pod "${pod_name}" >"${pod_describe}" 2>&1 || true
-    kubectl logs "${pod_name}" --tail=120 >"${pod_log}" 2>&1 || true
+    lab_gate_collect_pod_logs "${pod_name}" "${pod_log}" || true
     kubectl delete pod "${pod_name}" --ignore-not-found --wait=false >/dev/null 2>&1 || true
     lab_gate_die "Flex DNS pod did not become Ready (describe: ${pod_describe}, logs: ${pod_log})"
   fi
 
   if ! kubectl wait --for=jsonpath='{.status.phase}'=Succeeded "pod/${pod_name}" --timeout=60s >/dev/null; then
     kubectl describe pod "${pod_name}" >"${pod_describe}" 2>&1 || true
-    kubectl logs "${pod_name}" --tail=120 >"${pod_log}" 2>&1 || true
+    lab_gate_collect_pod_logs "${pod_name}" "${pod_log}" || true
     kubectl delete pod "${pod_name}" --ignore-not-found --wait=false >/dev/null 2>&1 || true
     lab_gate_die "Flex DNS pod did not complete successfully (describe: ${pod_describe}, logs: ${pod_log})"
   fi
 
-  kubectl logs "${pod_name}" --tail=120 >"${pod_log}"
+  lab_gate_collect_pod_logs "${pod_name}" "${pod_log}" || lab_gate_die "Flex DNS pod logs could not be collected after completion (logs: ${pod_log})"
   kubectl delete pod "${pod_name}" --ignore-not-found --wait=false >/dev/null 2>&1 || true
   grep -q 'svc.cluster.local' "${pod_log}" || lab_gate_die "Flex DNS resolv.conf did not include cluster search domains (logs: ${pod_log})"
   grep -q "${anyscale_dns_name}" "${pod_log}" || lab_gate_die "Flex DNS pod did not resolve ${anyscale_dns_name} (logs: ${pod_log})"
@@ -282,12 +297,12 @@ EOF
 
   if ! kubectl wait --for=jsonpath='{.status.phase}'=Succeeded "pod/${pod_name}" --timeout=5m >/dev/null; then
     kubectl describe pod "${pod_name}" >"${pod_describe}" 2>&1 || true
-    kubectl logs "${pod_name}" --tail=120 >"${pod_log}" 2>&1 || true
+    lab_gate_collect_pod_logs "${pod_name}" "${pod_log}" || true
     kubectl delete pod "${pod_name}" --ignore-not-found --wait=false >/dev/null 2>&1 || true
     lab_gate_die "Flex HTTPS egress pod did not succeed (describe: ${pod_describe}, logs: ${pod_log})"
   fi
 
-  kubectl logs "${pod_name}" --tail=120 >"${pod_log}"
+  lab_gate_collect_pod_logs "${pod_name}" "${pod_log}" || lab_gate_die "Flex HTTPS egress pod logs could not be collected after completion (logs: ${pod_log})"
   kubectl delete pod "${pod_name}" --ignore-not-found --wait=false >/dev/null 2>&1 || true
   grep -q 'flex-egress-ok' "${pod_log}" || lab_gate_die "Flex HTTPS egress pod did not emit flex-egress-ok (logs: ${pod_log})"
 

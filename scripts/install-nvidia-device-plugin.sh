@@ -91,7 +91,12 @@ PATCH
   )"
 
   kubectl -n kube-system rollout status ds/nvidia-device-plugin-daemonset --timeout=5m
-  gpu_allocatable="$(kubectl get nodes -l "agentpool=${target_pool}" -o json | jq '[.items[].status.allocatable["nvidia.com/gpu"]? // empty | tonumber] | add // 0')"
+  gpu_allocatable="0"
+  for _ in {1..30}; do
+    gpu_allocatable="$(kubectl get nodes -l "agentpool=${target_pool}" -o json | jq '[.items[].status.allocatable["nvidia.com/gpu"]? // empty | tonumber] | add // 0')"
+    [[ "${gpu_allocatable}" -ge 1 ]] && break
+    sleep 10
+  done
   [[ "${gpu_allocatable}" -ge 1 ]] || die "GPU target pool ${target_pool} has no allocatable nvidia.com/gpu after device-plugin rollout"
 
   if [[ "${ANYSCALE_PROOF_GPU_TARGET:-flex}" != "aks" ]]; then

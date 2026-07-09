@@ -232,15 +232,16 @@ Expected output:
 ```json
 {
   "enabled": true,
-  "region": "westus3",
-  "vm_name": "vm-flex-flexany-dev-wus3"
+  "agent_pool_name": "aksflexnodes",
+  "vm_name": "vm-flex-flexany-dev-scus"
 }
 {
-  "cluster_name": "aks-flexany-dev-wus2",
-  "location": "westus2",
   "public_aks": true
 }
 ```
+
+The exact Flex VM suffix follows `TF_VAR_flex_region_short`; CPU examples commonly
+use `wus3`, while the validated T4 GPU path uses `scus`.
 
 ## Next step
 

@@ -22,6 +22,7 @@ By the end of this module you will be able to:
 
 - Create an Anyscale cloud bound to the AKS cluster
 - Install the Anyscale operator via the AKS marketplace extension
+- Confirm the deploying user has the Azure-native Anyscale Platform administrator role
 - Verify the operator pod and Gateway API resources are healthy
 - Confirm the CPU-first compute placement contract before running the proof
 
@@ -129,6 +130,7 @@ TF_VAR_region_short="wus2"
 TF_VAR_flex_region="westus3"           # Flex host region
 TF_VAR_flex_region_short="wus3"
 TF_VAR_anyscale_enabled="true"        # Enable Anyscale operator
+TF_VAR_anyscale_platform_default_admin_assignment='{"enabled":true,"principal_type":"User","role_definition_name":"Anyscale Platform Administrator","scope":"subscription"}'
 ```
 
 **Rationale**:
@@ -136,6 +138,8 @@ TF_VAR_anyscale_enabled="true"        # Enable Anyscale operator
 - Home region must support `Microsoft.Anyscale.operator` for your subscription.
 - Flex region must have quota for your selected Flex host VM size.
 - Cross-region peering demonstrates hybrid AKS + Flex architecture.
+- The default Anyscale Platform administrator assignment gives the current Azure
+  principal console-owner access for this preview lab.
 
 If you deployed Module 2 to a different region pair, you must redeploy to a supported region
 before continuing with Module 4. See [Module 2 — Deploy the AKS Foundation](/docs/ai-workloads-on-aks/module-02-aks-foundation)
@@ -156,6 +160,7 @@ With `.env` configured correctly (region and `TF_VAR_anyscale_enabled="true"`), 
 This creates:
 
 - Azure-native Anyscale cloud resource through AzAPI
+- Current-principal `Anyscale Platform Administrator Role` assignment at subscription scope
 - AKS marketplace extension for the Anyscale operator
 - Gateway API resources for Anyscale ingress, including an explicit `anyscale-gateway`
   resource when the extension does not create one itself
@@ -165,12 +170,21 @@ This creates:
 Expected output:
 
 ```text
-azapi_resource.anyscale_cloud: Creation complete
+azapi_resource.anyscale_platform[0]: Creation complete
+azurerm_role_assignment.anyscale_platform["current_principal_admin"]: Creation complete
 azurerm_kubernetes_cluster_extension.anyscale_operator: Creation complete
-Apply complete! Resources: 4 added, 0 changed, 0 destroyed.
+Apply complete!
 ```
 
 Expected duration: **10–15 minutes** (extension reconciliation is slow on first install).
+
+:::note User RBAC is a hard gate
+The lab assigns the deploying Azure principal the built-in
+`Anyscale Platform Administrator Role` at subscription scope by default. This is separate
+from Kubernetes RBAC and from the workload identity data-plane roles used by jobs. Keep
+`TF_VAR_anyscale_platform_default_admin_assignment` enabled for workshop runs unless an
+administrator pre-creates an equivalent assignment for you.
+:::
 
 Hard gate: after apply, require Gate 4 to pass before proceeding:
 
@@ -191,6 +205,38 @@ Expected output:
   "provisioningState": "Succeeded",
   "currentVersion": "1.7.1"
 }
+```
+
+Verify the user-side Anyscale Platform RBAC assignment:
+
+```bash
+PRINCIPAL_ID="$(az ad signed-in-user show --query id -o tsv)"
+
+az role assignment list \
+  --assignee "$PRINCIPAL_ID" \
+  --scope "/subscriptions/$TF_VAR_azure_subscription_id" \
+  --query "[?roleDefinitionName=='Anyscale Platform Administrator Role'].{role:roleDefinitionName,scope:scope}" \
+  -o table
+```
+
+Expected output:
+
+```text
+Role                                  Scope
+------------------------------------  -------------------------------------------------
+Anyscale Platform Administrator Role  /subscriptions/<your-subscription-id>
+```
+
+The gate script also validates this assignment and writes the raw Azure RBAC result to
+`.github/agents/state/m4-anyscale-platform-rbac.json`.
+
+Expected gate output includes:
+
+```text
+PASS M4-01 Azure extension provisioning succeeded
+PASS M4-02 anyscale-operator namespace active
+PASS M4-03 operator pods healthy
+PASS M4-04 current principal has Anyscale Platform Administrator Role at subscription scope
 ```
 
 ## Step 4 — Verify the operator

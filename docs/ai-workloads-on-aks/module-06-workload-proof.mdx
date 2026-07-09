@@ -248,7 +248,7 @@ Expected output:
 ```json
 {
   "placement": {
-    "expected_regions": ["westus2", "westus3"],
+    "expected_regions": ["westus2", "southcentralus"],
     "observed_world_size": 1
   },
   "storage_proof": {
@@ -259,8 +259,8 @@ Expected output:
 {
   "name": "k-flex-proof-cpu-worker-group-0-fghij",
   "pod_ip": "10.244.0.36",
-  "node_name": "vm-flex-flexany-dev-wus3",
-  "node_region": "westus3",
+  "node_name": "vm-flex-flexany-dev-scus",
+  "node_region": "southcentralus",
   "node_agentpool": "aksflexnodes",
   "ray_node_type": "worker"
 }
@@ -316,11 +316,15 @@ Expected output:
 ```json
 {
   "name": "k-flex-proof-gpu-worker-group-0-fghij",
-  "node_name": "vm-flex-flexany-dev-wus3",
-  "node_region": "westus3",
+  "node_name": "vm-flex-flexany-dev-scus",
+  "node_region": "southcentralus",
   "node_agentpool": "aksflexnodes"
 }
 ```
+
+The decisive proof is not just `state=SUCCEEDED`; it is the combination of job
+success, proof-summary validation, and the Kubernetes placement artifact showing
+the worker pod on `agentpool=aksflexnodes` in the Flex region.
 
 ## Next step
 
