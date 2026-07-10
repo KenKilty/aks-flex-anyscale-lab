@@ -10,6 +10,10 @@ output "aks_cluster_id" {
   value = module.aks.cluster_id
 }
 
+output "aks_node_resource_group" {
+  value = module.aks.node_resource_group
+}
+
 output "aks_api_server_fqdn" {
   value = module.aks.api_server_fqdn
 }

@@ -111,7 +111,8 @@ check_anyscale_platform_current_principal_rbac() {
     return 0
   fi
 
-  config="${TF_VAR_anyscale_platform_default_admin_assignment:-{}}"
+  config="${TF_VAR_anyscale_platform_default_admin_assignment:-}"
+  [[ -n "${config}" ]] || config='{}'
   enabled="$(jq -r '.enabled // true' <<<"${config}")"
   if [[ "${enabled}" != "true" ]]; then
     skip "M4-04 current-principal Anyscale Platform RBAC gate disabled"

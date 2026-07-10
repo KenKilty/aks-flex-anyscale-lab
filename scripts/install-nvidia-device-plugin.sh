@@ -101,7 +101,11 @@ PATCH
 
   if [[ "${ANYSCALE_PROOF_GPU_TARGET:-flex}" != "aks" ]]; then
     gpu_product_label="$(resolve_gpu_product_label)"
-    kubectl label nodes -l "agentpool=${target_pool}" "nvidia.com/gpu.product=${gpu_product_label}" --overwrite >/dev/null
+    kubectl label nodes -l "agentpool=${target_pool}" \
+      "kubernetes.azure.com/agentpool=${target_pool}" \
+      "topology.kubernetes.io/region=${TF_VAR_flex_region}" \
+      "nvidia.com/gpu.product=${gpu_product_label}" \
+      --overwrite >/dev/null
   fi
 
   printf 'NVIDIA device plugin ready: %s allocatable GPU(s) in pool %s\n' "${gpu_allocatable}" "${target_pool}"

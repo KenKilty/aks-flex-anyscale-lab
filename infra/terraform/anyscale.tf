@@ -4,6 +4,7 @@ locals {
   anyscale_cloud_arm_id             = "${azurerm_resource_group.this.id}/providers/Anyscale.Platform/clouds/${local.anyscale_cloud_name}"
   anyscale_subscription_scope       = "/subscriptions/${var.azure_subscription_id}"
   anyscale_extension_release_train  = contains(["stable", "preview"], lower(var.anyscale_release_train)) ? title(lower(var.anyscale_release_train)) : var.anyscale_release_train
+  anyscale_gateway_address          = var.anyscale_gateway_hostname != "" ? var.anyscale_gateway_hostname : one(azurerm_public_ip.anyscale_gateway[*].ip_address)
   anyscale_platform_deployments = {
     top_level    = "dep-anyscale-${var.project}-${var.environment}-${var.region_short}"
     blob         = "dep-anyblob-${var.project}-${var.environment}-${var.region_short}"
@@ -17,7 +18,7 @@ locals {
     class_name  = "approuting-istio"
     namespace   = var.anyscale_operator_namespace
     api_version = "gateway.networking.k8s.io/v1"
-    hostname    = var.anyscale_gateway_hostname
+    address     = local.anyscale_gateway_address
   }
   anyscale_platform_role_name_aliases = {
     "Anyscale Platform Administrator" = "Anyscale Platform Administrator Role"
@@ -73,6 +74,37 @@ locals {
 }
 
 data "azurerm_client_config" "current" {}
+
+resource "azurerm_public_ip" "anyscale_gateway" {
+  count = var.anyscale_enabled && var.anyscale_gateway_hostname == "" ? 1 : 0
+
+  name                = local.names.anyscale_gateway_public_ip
+  resource_group_name = module.aks.node_resource_group
+  location            = var.azure_location
+  allocation_method   = "Static"
+  sku                 = "Standard"
+  tags                = var.tags
+
+  depends_on = [module.aks.aks_provisioning_validation]
+}
+
+resource "azurerm_network_security_rule" "anyscale_gateway_ingress" {
+  count = var.anyscale_enabled && var.anyscale_gateway_hostname == "" ? 1 : 0
+
+  name                        = "allow-anyscale-gateway-ingress"
+  priority                    = 320
+  direction                   = "Inbound"
+  access                      = "Allow"
+  protocol                    = "Tcp"
+  source_port_range           = "*"
+  destination_port_ranges     = ["80", "443"]
+  source_address_prefix       = "Internet"
+  destination_address_prefix  = "*"
+  resource_group_name         = azurerm_resource_group.this.name
+  network_security_group_name = local.names.nsg_aks_nodes
+
+  depends_on = [module.network]
+}
 
 # Azure-native Anyscale cloud resource path. This mirrors the proven private-sample
 # pattern and exports cloudResourceId for the AKS extension binding.
@@ -212,8 +244,8 @@ resource "azurerm_kubernetes_cluster_extension" "anyscale_operator" {
     "networking.gateway.className"     = local.anyscale_gateway_configuration.class_name
     "networking.gateway.namespace"     = local.anyscale_gateway_configuration.namespace
     "networking.gateway.apiVersion"    = local.anyscale_gateway_configuration.api_version
-    "networking.gateway.hostname"      = local.anyscale_gateway_configuration.hostname
-    "networking.gateway.ip"            = local.anyscale_gateway_configuration.hostname
+    "networking.gateway.hostname"      = local.anyscale_gateway_configuration.address
+    "networking.gateway.ip"            = local.anyscale_gateway_configuration.address
   }
 
   timeouts {
@@ -225,7 +257,112 @@ resource "azurerm_kubernetes_cluster_extension" "anyscale_operator" {
   depends_on = [
     azapi_resource.anyscale_platform,
     azurerm_role_assignment.anyscale_platform,
+    azurerm_public_ip.anyscale_gateway,
     module.aks.aks_provisioning_validation,
+  ]
+}
+
+resource "null_resource" "anyscale_gateway_static_ip" {
+  count = var.anyscale_enabled && var.anyscale_gateway_hostname == "" ? 1 : 0
+
+  triggers = {
+    extension_id             = azurerm_kubernetes_cluster_extension.anyscale_operator[0].id
+    gateway_address          = local.anyscale_gateway_address
+    gateway_name             = var.anyscale_gateway_name
+    gateway_namespace        = var.anyscale_operator_namespace
+    public_ip_name           = azurerm_public_ip.anyscale_gateway[0].name
+    public_ip_resource_group = azurerm_public_ip.anyscale_gateway[0].resource_group_name
+    tls_secret_name          = "anyscale-${replace(azapi_resource.anyscale_platform[0].output.cloud_deployment_id, "_", "-")}-certificate"
+  }
+
+  provisioner "local-exec" {
+    environment = {
+      GATEWAY_IP               = self.triggers.gateway_address
+      GATEWAY_NAME             = self.triggers.gateway_name
+      GATEWAY_NAMESPACE        = self.triggers.gateway_namespace
+      PUBLIC_IP_NAME           = self.triggers.public_ip_name
+      PUBLIC_IP_RESOURCE_GROUP = self.triggers.public_ip_resource_group
+      TLS_SECRET_NAME          = self.triggers.tls_secret_name
+    }
+
+    command = <<-EOT
+      set -eu
+
+      az aks get-credentials \
+        --resource-group ${azurerm_resource_group.this.name} \
+        --name ${module.aks.cluster_name} \
+        --overwrite-existing >/dev/null
+
+      FOUND=0
+      ATTEMPT=1
+      while [ "$ATTEMPT" -le 60 ]; do
+        if kubectl get gateway "$GATEWAY_NAME" -n "$GATEWAY_NAMESPACE" >/dev/null 2>&1; then
+          FOUND=1
+          break
+        fi
+        sleep 5
+        ATTEMPT=$((ATTEMPT + 1))
+      done
+
+      if [ "$FOUND" != "1" ]; then
+        echo "Gateway $GATEWAY_NAMESPACE/$GATEWAY_NAME was not created by the Anyscale extension."
+        exit 1
+      fi
+
+      FOUND=0
+      ATTEMPT=1
+      while [ "$ATTEMPT" -le 60 ]; do
+        if kubectl get secret "$TLS_SECRET_NAME" -n "$GATEWAY_NAMESPACE" >/dev/null 2>&1; then
+          FOUND=1
+          break
+        fi
+        sleep 5
+        ATTEMPT=$((ATTEMPT + 1))
+      done
+
+      if [ "$FOUND" != "1" ]; then
+        echo "TLS secret $GATEWAY_NAMESPACE/$TLS_SECRET_NAME was not created by the Anyscale extension."
+        exit 1
+      fi
+
+      PATCH=$(printf '{"spec":{"addresses":[{"type":"IPAddress","value":"%s"}],"infrastructure":{"annotations":{"service.beta.kubernetes.io/azure-pip-name":"%s","service.beta.kubernetes.io/azure-load-balancer-resource-group":"%s"}},"listeners":[{"name":"http","port":80,"protocol":"HTTP","allowedRoutes":{"namespaces":{"from":"All"}}},{"name":"https","port":443,"protocol":"HTTPS","tls":{"mode":"Terminate","certificateRefs":[{"group":"","kind":"Secret","name":"%s"}]},"allowedRoutes":{"namespaces":{"from":"All"}}}]}}' "$GATEWAY_IP" "$PUBLIC_IP_NAME" "$PUBLIC_IP_RESOURCE_GROUP" "$TLS_SECRET_NAME")
+      kubectl patch gateway "$GATEWAY_NAME" -n "$GATEWAY_NAMESPACE" --type merge -p "$PATCH"
+
+      ATTEMPT=1
+      while [ "$ATTEMPT" -le 60 ]; do
+        GATEWAY_STATUS_IP=$(kubectl get gateway "$GATEWAY_NAME" -n "$GATEWAY_NAMESPACE" -o jsonpath='{.status.addresses[0].value}' 2>/dev/null || true)
+        GATEWAY_HTTPS_PORT=$(kubectl get gateway "$GATEWAY_NAME" -n "$GATEWAY_NAMESPACE" -o jsonpath='{.spec.listeners[?(@.name=="https")].port}' 2>/dev/null || true)
+        SERVICE_NAME=$(kubectl get svc -n "$GATEWAY_NAMESPACE" -l "gateway.networking.k8s.io/gateway-name=$GATEWAY_NAME" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+        SERVICE_IP=""
+        SERVICE_HTTPS_PORT=""
+
+        if [ -n "$SERVICE_NAME" ]; then
+          SERVICE_IP=$(kubectl get svc "$SERVICE_NAME" -n "$GATEWAY_NAMESPACE" -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
+          SERVICE_HTTPS_PORT=$(kubectl get svc "$SERVICE_NAME" -n "$GATEWAY_NAMESPACE" -o jsonpath='{.spec.ports[?(@.port==443)].port}' 2>/dev/null || true)
+        fi
+
+        if [ "$GATEWAY_STATUS_IP" = "$GATEWAY_IP" ] && [ "$SERVICE_IP" = "$GATEWAY_IP" ] && [ "$GATEWAY_HTTPS_PORT" = "443" ] && [ "$SERVICE_HTTPS_PORT" = "443" ]; then
+          echo "Anyscale Gateway $GATEWAY_NAMESPACE/$GATEWAY_NAME is programmed at $GATEWAY_IP."
+          exit 0
+        fi
+
+        if [ -n "$SERVICE_NAME" ] && [ -n "$SERVICE_IP" ] && [ "$SERVICE_IP" != "$GATEWAY_IP" ]; then
+          kubectl delete svc "$SERVICE_NAME" -n "$GATEWAY_NAMESPACE"
+        fi
+
+        sleep 10
+        ATTEMPT=$((ATTEMPT + 1))
+      done
+
+      kubectl get gateway "$GATEWAY_NAME" -n "$GATEWAY_NAMESPACE" -o wide
+      kubectl get svc -n "$GATEWAY_NAMESPACE" -l "gateway.networking.k8s.io/gateway-name=$GATEWAY_NAME" -o wide
+      echo "Anyscale Gateway did not program the Terraform-managed static IP $GATEWAY_IP."
+      exit 1
+    EOT
+  }
+
+  depends_on = [
+    azurerm_kubernetes_cluster_extension.anyscale_operator,
   ]
 }
 
@@ -252,4 +389,9 @@ output "anyscale_cloud_name" {
 output "anyscale_cloud_deployment_id" {
   description = "Cloud deployment identifier emitted by Azure-native Anyscale resource deployment"
   value       = var.anyscale_enabled ? azapi_resource.anyscale_platform[0].output.cloud_deployment_id : null
+}
+
+output "anyscale_gateway_address" {
+  description = "Gateway address passed to the Anyscale AKS extension"
+  value       = var.anyscale_enabled ? local.anyscale_gateway_configuration.address : null
 }

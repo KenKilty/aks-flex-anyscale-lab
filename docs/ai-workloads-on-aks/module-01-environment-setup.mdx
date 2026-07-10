@@ -208,7 +208,7 @@ proof assumes the Flex node is Ready, the Flex-only kube-proxy is Ready, normal
 ClusterFirst DNS works from Flex pods, and Anyscale Gateway API reconciliation is healthy.
 :::
 
-## Environment check report
+## Success evidence
 
 Run the validation script to save a timestamped report:
 
@@ -216,7 +216,8 @@ Run the validation script to save a timestamped report:
 ./scripts/anyscale-aks.sh doctor | tee .cache/env-check-$(date +%Y%m%d-%H%M%S).json
 ```
 
-Keep this file. It is your Module 1 pass evidence.
+Keep this file. It is your Module 1 pass evidence because it captures the tool,
+Azure sign-in, region, quota, and `.env` checks before you deploy resources.
 
 ## Next step
 

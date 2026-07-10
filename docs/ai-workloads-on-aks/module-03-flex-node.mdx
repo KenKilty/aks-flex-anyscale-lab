@@ -366,6 +366,14 @@ kubectl get node "$FLEX_NODE" \
   -o jsonpath='{.metadata.labels}' | jq 'to_entries[] | select(.key | startswith("nvidia"))'
 ```
 
+## Success evidence
+
+You can move on when the Flex node is `Ready`, `kube-proxy-flex` is running on the
+Flex node, the DNS diagnostic pod resolves both `console.azure.anyscale.com` and
+`kubernetes.default.svc.cluster.local`, and AKS can route to the Flex pod CIDR.
+For the GPU path, also confirm the Flex node exposes NVIDIA labels after the GPU
+host image boots.
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Resolution |

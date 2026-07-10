@@ -298,6 +298,100 @@ contract, plus `nvidia.com/gpu` allocation. A stale or globally injected
 home-region hint should fail validation rather than being accepted as placement
 evidence.
 
+## Step 8: Capture Anyscale Console evidence
+
+The command-line artifacts prove placement. The Anyscale Console gives you the
+operator view of the same run: job state, cluster shape, proof logs, and live
+metrics. Capture these screens while the job is still `Running` when you can,
+especially for the GPU path where the metrics panels show GPU use.
+
+1. Open `https://console.azure.anyscale.com`.
+2. Select the cloud for this lab. Its name matches the Anyscale Platform cloud in
+  Terraform, for example `/subscriptions/.../resourcegroups/rg-flexany-dev-wus2/providers/anyscale.platform/clouds/flexany-dev-wus2`.
+3. Select the `default` project.
+4. Open **Jobs** from the left navigation.
+5. Select your proof job. The job name starts with `flex-proof-cpu-` or
+  `flex-proof-gpu-`.
+
+Use the Jobs list first. It should show the completed CPU and GPU proof jobs, or
+the active GPU job if you capture evidence during a longer run. This screen proves
+that Anyscale accepted and tracked the proof job alongside the local Kubernetes
+evidence.
+
+![Anyscale Jobs list showing completed CPU and GPU proof jobs](./assets/anyscale-console/jobs-list-proof-run.png)
+
+On the **Overview** tab, check the status and the cluster summary. For the GPU
+path, the header should show two nodes and one GPU while the run is active. The
+job details should show the proof run name, `anyscale/ray:2.54.1-py311-cu121`,
+the `gpu-home` compute config, and the full `python train.py ...` entrypoint.
+This screen connects the Anyscale Job to the compute config and container image
+that the proof harness submitted.
+
+![Anyscale Job Overview showing the running GPU proof](./assets/anyscale-console/job-overview-gpu-proof.png)
+
+Open **Logs**, keep **Application logs** selected, choose the current job attempt,
+and set **Component** to `Driver`. Look for `PROOF_SUMMARY_JSON=`. That line is
+the console-side copy of the summary that the proof harness writes under
+`.cache/anyscale/proofs/`. In the GPU path, the same line should include the Flex
+placement hints, the expected home and Flex regions, `cuda_available=true`, and
+the storage proof URI.
+
+![Anyscale Job Logs showing PROOF_SUMMARY_JSON from the GPU proof](./assets/anyscale-console/job-logs-gpu-proof.png)
+
+Open **Metrics**. Use the **Core**, **Data**, and **Train** tabs to inspect the
+dashboard categories. If the embedded panel area is blank, select **View tab in
+Grafana** from the Metrics page. The direct Grafana page should keep the same
+`ClusterId` as the Anyscale Job session.
+
+On the Grafana overview, check **Node Count** and **Workload Instances**. The GPU
+proof should show one head node and one `gpu-worker`. The workload instance IPs
+should match the placement evidence: the worker IP comes from the Flex pod CIDR,
+and the head IP comes from the AKS node subnet.
+
+![Grafana overview showing the Ray head and GPU worker for the Anyscale proof](./assets/anyscale-console/job-metrics-grafana-overview-gpu-proof.png)
+
+On the same Grafana dashboard, check **Cluster Utilization**. For the GPU path,
+`GPU (physical)` should rise above idle while the Ray Train worker is running.
+This graph is the Console evidence that the Flex GPU was used during the proof,
+while the placement JSON proves which node hosted that worker.
+
+![Grafana cluster utilization showing GPU activity during the Anyscale proof](./assets/anyscale-console/job-metrics-grafana-utilization-gpu-proof.png)
+
+You can also keep a wider Grafana dashboard capture with node count, workload
+instances, and utilization in one frame. Use it when you need one screenshot that
+summarizes the proof for a review or report.
+
+![Grafana metrics for the Anyscale GPU proof showing node count and GPU utilization](./assets/anyscale-console/job-metrics-grafana-gpu-proof.png)
+
+Record these Console checks with the proof artifacts:
+
+| Screen | What to capture | What it proves |
+| ------ | --------------- | -------------- |
+| Jobs list | `flex-proof-cpu-*` and `flex-proof-gpu-*` rows | The proof jobs ran through the Anyscale control plane |
+| Overview | Job status, node/GPU summary, image, compute config, entrypoint | The job used the expected Ray image and compute config |
+| Logs | `PROOF_SUMMARY_JSON=` in Driver logs | The Console contains the same proof summary as the local artifact |
+| Metrics / Grafana | Node count, workload instances, GPU utilization | The active cluster had a head node, a GPU worker, and non-idle GPU use |
+
+If the Metrics page shows `This job is active, but your browser is unable to
+communicate with it`, run the diagnostic command printed in the warning before
+rerunning the proof:
+
+```bash
+source .env
+export ANYSCALE_HOST="${TF_VAR_anyscale_control_plane_url}"
+.venv/bin/anyscale cluster network_debug <session-id>
+```
+
+A healthy path reports successful DNS lookup, TCP connect, TLS connect, and HTTPS
+GET for the `session-*.i.azure.anyscaleuserdata.com` hostname. The session hostname
+must resolve to the same public IP as the Anyscale Gateway in Kubernetes:
+
+```bash
+dig +short session-<session-id-without-ses-prefix>.i.azure.anyscaleuserdata.com
+kubectl get gateway anyscale-gateway -n anyscale-operator \
+  -o jsonpath='{.status.addresses[0].value}{"\n"}'
+```
+
 ## Flex GPU proof command
 
 After a GPU proof, use the placement artifact to prove the Ray GPU worker landed
@@ -318,6 +412,8 @@ Expected output:
   "node_agentpool": "aksflexnodes"
 }
 ```
+
+## Success evidence
 
 The decisive proof is not just `state=SUCCEEDED`; it is the combination of job
 success, proof-summary validation, and the Kubernetes placement artifact showing

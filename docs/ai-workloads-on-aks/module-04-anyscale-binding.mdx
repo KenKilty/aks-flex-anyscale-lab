@@ -298,6 +298,14 @@ Run the GPU proof only after the CPU proof succeeds, T4 quota is available in th
 Flex region, and Module 5 shows `nvidia.com/gpu` allocatable on the Flex node.
 :::
 
+## Success evidence
+
+You can move on when the `Anyscale.Platform` resource provider is registered, the
+Anyscale cloud is `ACTIVE`, the AKS extension reports `Succeeded`, the Gateway has
+`Programmed=True`, and the placement table still sends workers to
+`agentpool=aksflexnodes`. Those checks prove Azure, Kubernetes, and Anyscale are
+bound before any proof job runs.
+
 ## Next step
 
 Proceed to **[Module 5: Configure Autoscaling Profiles](/docs/ai-workloads-on-aks/module-05-autoscaling)**.

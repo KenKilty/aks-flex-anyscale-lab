@@ -1,3 +1,16 @@
+mock_provider "azurerm" {
+  mock_resource "azurerm_kubernetes_cluster" {
+    defaults = {
+      fqdn                = "aks-tftest-ci-wus3.example.azmk8s.io"
+      kubelet_identity    = [{ object_id = "11111111-1111-1111-1111-111111111111" }]
+      node_resource_group = "MC_rg-tftest-ci-wus3_aks-tftest-ci-wus3_westus3"
+      oidc_issuer_url     = "https://issuer.example.test/"
+    }
+  }
+}
+
+mock_provider "azapi" {}
+
 variables {
   azure_subscription_id = "00000000-0000-0000-0000-000000000000"
   azure_tenant_id       = "00000000-0000-0000-0000-000000000000"

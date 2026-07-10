@@ -337,7 +337,7 @@ variable "anyscale_gateway_name" {
 }
 
 variable "anyscale_gateway_hostname" {
-  description = "Hostname or address published by the Anyscale Gateway API Gateway"
+  description = "Optional pre-created hostname or IP address published by the Anyscale Gateway API Gateway. Leave empty to let Terraform create a managed static public IP in the AKS node resource group."
   type        = string
   default     = ""
 }

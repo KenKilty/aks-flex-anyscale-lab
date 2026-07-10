@@ -77,4 +77,8 @@ resource "azurerm_linux_virtual_machine" "this" {
       storage_account_uri = null
     }
   }
+
+  lifecycle {
+    ignore_changes = [identity]
+  }
 }

@@ -167,6 +167,13 @@ aks-to-flex  rg-flexany-dev-wus2    Connected       Succeeded
 
 Both `aks-to-flex` and `flex-to-aks` peerings should show `Succeeded`.
 
+## Success evidence
+
+You can move on when the `sys` node pool is `Ready`, core Kubernetes pods are
+running, and both VNet peerings show `Succeeded`. Those checks prove the home AKS
+cluster exists, the control-plane add-ons are healthy, and the Flex-region network
+path is ready for Module 3.
+
 ## Next step
 
 Proceed to **[Module 3: Attach a Flex Node](/docs/ai-workloads-on-aks/module-03-flex-node)**.

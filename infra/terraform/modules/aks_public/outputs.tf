@@ -6,6 +6,10 @@ output "cluster_name" {
   value = azurerm_kubernetes_cluster.this.name
 }
 
+output "node_resource_group" {
+  value = azurerm_kubernetes_cluster.this.node_resource_group
+}
+
 output "oidc_issuer_url" {
   value = azurerm_kubernetes_cluster.this.oidc_issuer_url
 }
@@ -15,7 +19,7 @@ output "api_server_fqdn" {
 }
 
 output "kubelet_identity_object_id" {
-  value = azurerm_kubernetes_cluster.this.kubelet_identity[0].object_id
+  value = try(azurerm_kubernetes_cluster.this.kubelet_identity[0].object_id, "00000000-0000-0000-0000-000000000000")
 }
 
 output "cluster_contract" {

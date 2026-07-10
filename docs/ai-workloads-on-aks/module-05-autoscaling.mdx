@@ -243,6 +243,13 @@ Expected output:
 The exact Flex VM suffix follows `TF_VAR_flex_region_short`; CPU examples commonly
 use `wus3`, while the validated T4 GPU path uses `scus`.
 
+## Success evidence
+
+You can move on when `./scripts/validate-lab-gates.sh m5` prints `PASS` for the
+CPU scale profile, Flex node readiness, Flex DNS, Flex HTTPS egress, AKS-to-Flex
+pod reachability, and Anyscale Gateway health. If the GPU path is enabled, the
+same gate should also report allocatable `nvidia.com/gpu` on `aksflexnodes`.
+
 ## Next step
 
 Proceed to **[Module 6: Run the Workload Proof](/docs/ai-workloads-on-aks/module-06-workload-proof)**.
