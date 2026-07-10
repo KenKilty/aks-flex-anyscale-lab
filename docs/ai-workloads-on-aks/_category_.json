@@ -1,7 +1,7 @@
 {
-  "label": "AI Workloads on AKS",
+  "label": "Run AI Where Your GPUs Are",
   "link": {
     "type": "generated-index",
-    "description": "Candidate AI workload workshops for AKS Labs submission"
+    "description": "Use AKS Flex Node and Anyscale on Azure to run Ray AI/ML workloads where your compute and GPUs already are."
   }
 }

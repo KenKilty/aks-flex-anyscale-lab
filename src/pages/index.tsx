@@ -5,8 +5,8 @@ import Layout from "@theme/Layout";
 export default function Home(): React.JSX.Element {
   return (
     <Layout
-      title="AKS Flex Node + Anyscale on Azure"
-      description="Use AKS Flex Node to extend a single AKS cluster to GPUs in other Azure regions, on-premises bare metal, or other clouds — then run distributed AI workloads through Anyscale without changing your code."
+      title="Run AI Where Your GPUs Are"
+      description="Use AKS Flex Node and Anyscale on Azure to run Ray AI/ML workloads where your compute and GPUs already are."
     >
       <header
         style={{
@@ -17,7 +17,7 @@ export default function Home(): React.JSX.Element {
         }}
       >
         <h1 style={{ fontSize: "2.5rem", marginBottom: "1rem" }}>
-          AKS Flex Node + Anyscale on Azure
+          Run AI Where Your GPUs Are
         </h1>
         <p
           style={{
@@ -27,16 +27,16 @@ export default function Home(): React.JSX.Element {
             opacity: 0.9,
           }}
         >
-          Learn how to extend a single AKS cluster across Azure regions, on-premises
-          machines, or other clouds using{" "}
-          <strong>AKS Flex Node</strong>, then run distributed GPU workloads through{" "}
-          <strong>Anyscale</strong> — without changing your workload code.
+          Learn how <strong>AKS Flex Node</strong> lets AKS use reachable Linux
+          compute in another region, datacenter, or cloud environment, then use{" "}
+          <strong>Anyscale on Azure</strong> to run Ray AI/ML workloads on that
+          capacity without changing your workload code.
         </p>
         <Link
           className="button button--secondary button--lg"
           to="/docs/ai-workloads-on-aks/aks-flex-anyscale-multi-region"
         >
-          Start the lab ⏱ ~75 min
+          Start the lab, about 75 min
         </Link>
       </header>
 
@@ -52,17 +52,17 @@ export default function Home(): React.JSX.Element {
             {
               title: "Multi-region capacity",
               body:
-                "Attach worker nodes from any Azure region, on-premises server, or external cloud to one AKS control plane with AKS Flex Node.",
+                "Attach reachable Linux compute from another Azure region, an on-premises server, or another cloud environment to one AKS control plane.",
             },
             {
-              title: "Distributed AI workloads",
+              title: "Ray AI/ML workloads",
               body:
-                "Use Ray Train and DeepSpeed through Anyscale to saturate GPU capacity that spans geographic and infrastructure boundaries.",
+                "Use Anyscale on Azure to submit Ray Jobs onto the AKS and Flex capacity profile you define.",
             },
             {
-              title: "Repeatable proof artifacts",
+              title: "Placement proof",
               body:
-                "Every lab run produces machine-readable placement and saturation evidence so you can verify the topology is actually working.",
+                "Validate proof summaries and Kubernetes placement data so job success is tied to the node where the worker actually ran.",
             },
           ].map(({ title, body }) => (
             <div

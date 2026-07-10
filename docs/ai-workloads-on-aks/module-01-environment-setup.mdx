@@ -1,8 +1,8 @@
 ---
-title: "Module 1 — Environment Setup and Feasibility Gate"
+title: "Module 1: Environment Setup and Feasibility Gate"
 description: Install tooling, authenticate to Azure, choose the CPU or GPU path, check quota, and confirm the lab is ready to proceed.
 sidebar_position: 2
-sidebar_label: "Module 1 — Environment Setup"
+sidebar_label: "Module 1: Environment Setup"
 tags:
   - aks
   - anyscale
@@ -12,50 +12,50 @@ tags:
 
 import Prerequisites from "../../src/components/SharedMarkdown/_prerequisites.mdx";
 
-This module gets your workstation ready, verifies that Azure quota exists for your
-chosen CPU or GPU path, and produces an environment check report that gates entry
-to the remaining modules.
+This module answers the first practical question: can your workstation and Azure
+subscription run the lab path you picked? You will authenticate, check quota, and
+save a small evidence file before deploying anything expensive.
 
-## Objectives
+## What You Will Do
 
-By the end of this module you will be able to:
-
-- Verify all required CLI tools are installed and authenticated
-- Confirm CPU quota in both regions (home and Flex)
-- Decide whether to run the CPU path or the T4 GPU Flex path
-- Create and populate your local `.env` file
+You will verify that your workstation has the required tools, confirm Azure quota
+for the path you plan to run, and create the local `.env` file that drives the
+rest of the lab. This is also where you choose the low-cost CPU path or the T4
+GPU Flex path before Terraform creates any resources.
 
 ## Regional Prerequisites
 
-This lab uses a **two-region architecture** to demonstrate hybrid AKS + Flex Node capabilities:
-
-- **Home region (AKS cluster)**: Must support the Anyscale operator AKS extension
-- **Flex region (Flex host)**: Must have reachable network capacity for the Flex VM and proof worker
+This lab uses two Azure regions so the Flex placement proof has something real to
+prove. The home region hosts AKS and must support the Anyscale operator AKS
+extension. The Flex region hosts the external VM and must have reachable network
+capacity for the Flex host and proof worker.
 
 **Recommended CPU configuration for this lab:**
 
-- **Home: West US 2 (westus2)** — Public AKS cluster, storage, ACR, and Anyscale operator extension
-- **Flex: West US 3 (westus3)** — Flex host joined as an external AKS node
+| Role | Region | What runs there |
+| --- | --- | --- |
+| Home | West US 2 (`westus2`) | Public AKS cluster, storage, ACR, and Anyscale operator extension |
+| Flex | West US 3 (`westus3`) | Flex host joined as an external AKS node |
 
 **Validated GPU configuration:**
 
-- **Home: West US 2 (westus2)** — Public AKS cluster and Anyscale cloud binding
-- **Flex: South Central US (southcentralus)** — `Standard_NC16as_T4_v3` Flex host when T4 capacity is unavailable in `westus3`
+| Role | Region | What runs there |
+| --- | --- | --- |
+| Home | West US 2 (`westus2`) | Public AKS cluster and Anyscale cloud binding |
+| Flex | South Central US (`southcentralus`) | `Standard_NC16as_T4_v3` Flex host when T4 capacity is unavailable in `westus3` |
 
 **Why this pair?**
 
-- The AKS control plane and Azure-native Anyscale deployment stay in the home region
-- The Flex host proves cross-region node join, scheduling, DNS, and service routing
-- The CPU proof uses `Standard_D4s_v5`, so it is cheaper and faster to repeat
-- Both regions are in the same geography, minimizing latency for cross-region peering
+The AKS control plane and Anyscale on Azure deployment stay in the home region.
+The Flex host gives the lab a real second location for node join, scheduling, DNS,
+and service routing checks. For repeatable student runs, the CPU proof uses
+`Standard_D4s_v5`; the validated GPU path moves the Flex host to `southcentralus`
+when `westus3` does not have T4 capacity.
 
-**Other supported regions** for the home cluster (if westus2 unavailable):
-
-- East US (eastus)
-- East US 2 (eastus2)
-- West Europe (westeurope)
-- UK South (uksouth)
-- Australia East (australiaeast)
+Other home-cluster regions may work when `westus2` is unavailable. Common options
+include East US (`eastus`), East US 2 (`eastus2`), West Europe (`westeurope`), UK
+South (`uksouth`), and Australia East (`australiaeast`). Always run the Module 4
+extension preflight against your exact cluster before committing to a fallback.
 
 :::caution Module 4 requires supported region
 If you deploy the AKS cluster to an unsupported region in Module 2, you will need to
@@ -70,7 +70,7 @@ redeploy before reaching Module 4 (Anyscale Binding). Check quota and region sup
   ]}
 />
 
-## Step 1 — Clone the repository
+## Step 1: Clone the repository
 
 ```bash
 git clone <repo-url> aks-flex-anyscale-sample
@@ -79,7 +79,7 @@ cd aks-flex-anyscale-sample
 
 Use the repository URL provided with this workshop run.
 
-## Step 2 — Create your environment file
+## Step 2: Create your environment file
 
 ```bash
 cp .env-template .env
@@ -96,7 +96,7 @@ TF_VAR_azure_tenant_id="<your-tenant-id>"
 
 Leave all other values at the template defaults for now. You will adjust region and sizing values in later modules.
 
-## Step 3 — Run the doctor check
+## Step 3: Run the doctor check
 
 ```bash
 ./scripts/anyscale-aks.sh doctor
@@ -114,7 +114,7 @@ Expected output:
 
 If this fails, run `az login` and retry.
 
-## Step 4 — Check quota
+## Step 4: Check quota
 
 ### CPU path (Standard DSv5 family)
 
@@ -169,7 +169,7 @@ If your CPU quota is low, request an increase at
 before continuing. GPU quota can be requested later if you want to extend the lab.
 :::
 
-## Step 5 — Confirm the organized path
+## Step 5: Confirm the chosen path
 
 | Step | CPU path | GPU path |
 | --- | --- | --- |
@@ -178,7 +178,7 @@ before continuing. GPU quota can be requested later if you want to extend the la
 | Flex region | `westus3` | `southcentralus` in the validated T4 run |
 | Proof workload | CPU-only Ray proof on Flex | `GPU:1` Ray worker on the Flex T4 host |
 
-Record the organized path in `.env`:
+Record the chosen path in `.env`:
 
 ```bash
 TF_VAR_azure_location="westus2"
@@ -216,8 +216,8 @@ Run the validation script to save a timestamped report:
 ./scripts/anyscale-aks.sh doctor | tee .cache/env-check-$(date +%Y%m%d-%H%M%S).json
 ```
 
-Keep this file — it is your Module 1 pass evidence.
+Keep this file. It is your Module 1 pass evidence.
 
 ## Next step
 
-Proceed to **[Module 2 — Deploy the AKS Foundation](/docs/ai-workloads-on-aks/module-02-aks-foundation)**.
+Proceed to **[Module 2: Deploy the AKS Foundation](/docs/ai-workloads-on-aks/module-02-aks-foundation)**.

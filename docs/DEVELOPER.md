@@ -3,7 +3,7 @@ title: Developer Guide
 sidebar_position: 99
 ---
 
-This guide explains how the lab is structured, how the tooling fits together, and how to validate changes locally before running a live Azure end-to-end test.
+This guide explains the lab structure, the tooling path, and the checks to run before a live Azure end-to-end test.
 
 ## Project Structure
 
@@ -24,7 +24,7 @@ This guide explains how the lab is structured, how the tooling fits together, an
 | Documentation | Docusaurus 3, MDX, Mermaid, SVG assets |
 | Infrastructure | Terraform, AzureRM provider, AzAPI provider |
 | Azure services | AKS, AKS Flex Node, Azure CNI, Gateway API app routing, ACR, Storage, Managed Identity, Log Analytics |
-| Anyscale | Azure-native Anyscale Platform cloud, AKS marketplace extension, Anyscale CLI, Ray Jobs |
+| Anyscale | Anyscale on Azure Platform cloud, AKS marketplace extension, Anyscale CLI, Ray Jobs |
 | Workload | Python, Ray Train, DeepSpeed, PyTorch, Azure Blob proof storage through workload identity |
 | Validation | Bash gates, `jq`, `kubectl`, Azure CLI, Terraform validate, TypeScript, markdownlint, ruff, mypy, npm audit |
 
@@ -157,7 +157,7 @@ Placement proof comes from `<proof-name>-kubernetes-placement.json`. For GPU suc
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
-| Module 4 operator crash says gateway address missing | Extension rendered gateway config without an address | Ensure both `networking.gateway.hostname` and `networking.gateway.ip` are configured |
+| Module 4 operator crash says gateway address missing | Extension rendered gateway config without an address | Configure both `networking.gateway.hostname` and `networking.gateway.ip` |
 | Module 4 RBAC gate fails | Current Azure principal lacks Anyscale Platform role | Keep `TF_VAR_anyscale_platform_default_admin_assignment` enabled or pre-create equivalent role assignment |
 | Module 5 GPU gate has no allocatable GPU | NVIDIA device plugin not ready or Flex host lacks driver | Use the GPU host image, run `scripts/install-nvidia-device-plugin.sh`, and wait for allocatable `nvidia.com/gpu` |
 | GPU worker Pending with `nvidia.com/gpu.product=NVIDIA-T4` selector | Flex node lacks product label | Re-run `scripts/install-nvidia-device-plugin.sh` |

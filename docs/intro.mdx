@@ -1,28 +1,27 @@
 ---
-title: Distributed AI on AKS Across Regions, Clouds, and On-Premises
+title: Run AI Where Your GPUs Are
 sidebar_position: 1
 ---
 
-This lab teaches you how to extend a single AKS cluster across Azure regions,
-on-premises machines, or other clouds using **AKS Flex Node**, then run
-distributed CPU or GPU workloads through **Anyscale** without modifying your
-workload code.
+This lab starts with one AKS cluster and one practical capacity problem: the GPU
+you need may live in another Azure region, in your datacenter, or in another
+cloud environment. **AKS Flex Node** lets the cluster use that Linux compute as
+worker capacity. **Anyscale on Azure** adds the managed Ray layer for Jobs,
+compute profiles, and workload observability. Together, they let you run Ray
+AI/ML workloads where your compute and GPUs already are.
 
-AKS Flex Node lets you join any Linux host to an existing AKS cluster as a
-worker node. Combined with Anyscale's ability to schedule Ray Train and DeepSpeed
-jobs across all available GPU capacity, this creates a unified distributed AI
-platform that can span datacenter boundaries.
+The Azure-region path in the modules is the reference run. The same join model can
+apply to reachable on-premises machines or hosts in another environment. The lab
+keeps the student path narrow enough to prove placement, understand the moving
+parts, and tear everything down cleanly.
 
-## What you will learn
+## What You Will Learn
 
-- How AKS Flex Node works and when to use it instead of standard node pools
-- How to attach CPU or GPU hosts from a second Azure region, on-premises, or
-  another cloud to a single AKS cluster
-- How Anyscale dispatches distributed training jobs across heterogeneous node
-  locations without code changes
-- How to produce machine-readable proof that your workload actually ran on nodes
-  in both locations
+You will learn why Flex Node matters when useful compute sits outside the home
+AKS region, then attach CPU or GPU hosts from a second Azure region to a single
+AKS cluster. After Anyscale on Azure submits Ray Jobs onto that combined capacity,
+you will prove placement with job output, Kubernetes pod data, and teardown checks.
 
 ## Where to start
 
-Open the **AI Workloads on AKS** workshop in the left navigation.
+Open **Run AI Where Your GPUs Are** in the left navigation.

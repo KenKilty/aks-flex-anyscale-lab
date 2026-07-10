@@ -1,8 +1,8 @@
 ---
-title: "Module 3 — Attach a Flex Node from Another Location"
+title: "Module 3: Attach a Flex Node from Another Location"
 description: Provision a CPU Flex host in westus3, join it to the westus2 AKS cluster, verify Flex Ready, install Flex-only service routing, and prove ClusterFirst DNS.
 sidebar_position: 4
-sidebar_label: "Module 3 — Flex Node"
+sidebar_label: "Module 3: Flex Node"
 tags:
   - aks
   - flex-node
@@ -11,40 +11,37 @@ tags:
 
 import Prerequisites from "../../src/components/SharedMarkdown/_prerequisites.mdx";
 
-This is the core AKS Flex Node step. You will provision a VM in `westus3` (or any
-other location with network reachability to the AKS API server), generate a join
-config, copy it to the host, start the Flex Node agent, and verify the node appears
-in the AKS cluster.
+This is the step where the lab becomes more than a normal AKS deployment. You
+provision a VM in the Flex region, generate its join config, start the Flex Node
+agent, and verify that Kubernetes sees the host as a worker node in the same AKS
+cluster.
 
 :::info This works beyond Azure regions
 Although this lab uses a second Azure region, the join process is identical for an
-on-premises bare metal machine or a VM on another cloud — as long as it can reach
+on-premises bare metal machine or a VM on another cloud as long as it can reach
 the AKS API server over HTTPS and has bidirectional IP routing to AKS node addresses.
 Swap `westus3` for your network and the steps below stay the same.
 :::
 
 :::warning GPU driver requirement
 AKS Flex Node does **not** install the NVIDIA kernel driver. The host image must
-have the driver pre-baked for a future GPU extension. The primary CPU path uses a
+have the driver pre-baked for the GPU path. The primary CPU path uses a
 standard Ubuntu image and does not require NVIDIA drivers.
 
-For the **CPU path**, any Ubuntu 22.04 or 24.04 VM works — no special image needed.
+For the **CPU path**, any Ubuntu 22.04 or 24.04 VM works. No special image is needed.
 :::
 
-## Objectives
+## What You Will Do
 
-By the end of this module you will be able to:
-
-- Provision a CPU Flex host with Terraform in the peered VNet
-- Apply AKS Flex Node bootstrap RBAC bindings on the target cluster
-- Generate a Flex Node join config using `aks-flex-config`
-- Bootstrap the host with `aks-flex-node start`
-- Verify the node is Ready in Kubernetes with correct labels and taints
-- Verify the Flex-only `kube-proxy-flex` DaemonSet and ClusterFirst DNS
+You will provision the Flex host with Terraform, apply the bootstrap RBAC that
+lets the host join AKS, and generate the Flex Node config with `aks-flex-config`.
+After the agent starts, you will verify the node is `Ready`, carries the expected
+labels and taints, runs the Flex-only `kube-proxy-flex` DaemonSet, and resolves
+ClusterFirst DNS from a pod scheduled on Flex.
 
 <Prerequisites />
 
-## Step 1 — Enable Flex host provisioning
+## Step 1: Enable Flex host provisioning
 
 Edit `.env` and set:
 
@@ -78,7 +75,7 @@ TF_VAR_flex_host_vm_size="Standard_D4s_v5"
 TF_VAR_flex_region="westus3"
 ```
 
-Also ensure your SSH public key is available:
+Also confirm your SSH public key is available:
 
 ```bash
 # Auto-loaded from SSH_PRIVATE_KEY_PATH.pub when the field is empty
@@ -86,14 +83,14 @@ TF_VAR_flex_host_admin_ssh_public_key=""
 SSH_PRIVATE_KEY_PATH="${HOME}/.ssh/id_ed25519"
 ```
 
-## Step 2 — Apply to provision the Flex host
+## Step 2: Apply to provision the Flex host
 
 ```bash
 ./scripts/anyscale-aks.sh apply
 ```
 
-This adds 4–5 new resources (VM, NIC, public IP, NSG SSH rule, cluster user role assignment).
-Expected duration: **3–5 minutes**.
+This adds 4-5 new resources (VM, NIC, public IP, NSG SSH rule, cluster user role assignment).
+Expected duration: **3-5 minutes**.
 
 Check the new outputs:
 
@@ -114,7 +111,7 @@ Expected output:
 }
 ```
 
-Note the `flex_host_public_ip` value — you will need it to verify SSH access.
+Note the `flex_host_public_ip` value. You will need it to verify SSH access.
 
 :::note Gate 1: Terraform owns Flex pod IP capacity
 The Flex NIC must have Terraform-managed secondary pod IP configurations before
@@ -179,7 +176,7 @@ Name           Prefix         NextHop
 flex-pod-cidr  10.244.0.0/16  10.60.1.4
 ```
 
-## Step 3 — Set up Flex Node RBAC and generate config
+## Step 3: Set up Flex Node RBAC and generate config
 
 ```bash
 ./scripts/anyscale-aks.sh flex-config
@@ -198,11 +195,11 @@ This applies node bootstrap RBAC bindings (idempotent) and then runs
 
 :::tip What the config contains
 The generated config includes the AKS API server URL, cluster CA, subscription context,
-and the managed identity client ID. It does not contain any secrets — the VM's
+and the managed identity client ID. It does not contain any secrets; the VM's
 system-assigned identity handles authentication at runtime.
 :::
 
-## Step 4 — Bootstrap the Flex host
+## Step 4: Bootstrap the Flex host
 
 ```bash
 ./scripts/anyscale-aks.sh flex-bootstrap
@@ -241,9 +238,9 @@ Expected bootstrap output (last lines):
 level=INFO msg="operation completed successfully" operation=bootstrap
 ```
 
-## Step 5 — Verify the node joined
+## Step 5: Verify the node joined
 
-Wait 1–2 minutes for kubelet registration, then:
+Wait 1-2 minutes for kubelet registration, then:
 
 ```bash
 kubectl get nodes -o wide -L topology.kubernetes.io/region
@@ -309,7 +306,7 @@ Expected output:
 vm-flex-flexany-dev-wus3   Ready   agent   5m   v1.31.1   agentpool=aksflexnodes,...,topology.kubernetes.io/region=westus3
 ```
 
-## Step 6 — Verify Flex-only service routing
+## Step 6: Verify Flex-only service routing
 
 The normal AKS `kube-proxy` DaemonSet does not target Flex nodes. The bootstrap path
 creates a dedicated `kube-proxy-flex` DaemonSet that targets only `agentpool=aksflexnodes`.
@@ -332,7 +329,7 @@ NAMESPACE     NAME                    READY   STATUS    NODE
 kube-system   kube-proxy-flex-abcde   1/1     Running   vm-flex-flexany-dev-wus3
 ```
 
-## Step 7 — Verify ClusterFirst DNS from Flex
+## Step 7: Verify ClusterFirst DNS from Flex
 
 Run a normal Kubernetes DNS diagnostic pod on the Flex node. This uses the default
 `ClusterFirst` DNS policy; do not switch to host DNS for the proof path.
@@ -360,7 +357,7 @@ Address 1: 10.0.0.1
 pod "dns-flex-debug" deleted
 ```
 
-For a future GPU path, confirm NVIDIA labels are present only after using a GPU host image:
+For the GPU path, confirm NVIDIA labels are present only after using a GPU host image:
 
 ```bash
 source .env
@@ -384,4 +381,4 @@ kubectl get node "$FLEX_NODE" \
 
 ## Next step
 
-Proceed to **[Module 4 — Bind Anyscale](/docs/ai-workloads-on-aks/module-04-anyscale-binding)**.
+Proceed to **[Module 4: Bind Anyscale](/docs/ai-workloads-on-aks/module-04-anyscale-binding)**.

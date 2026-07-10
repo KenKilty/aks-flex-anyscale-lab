@@ -1,4 +1,4 @@
-# Deepspeed Fine-Tune Proof Workload
+# DeepSpeed Fine-Tune Proof Workload
 
 This directory contains the representative Ray Train + DeepSpeed proof workload
 for the lab. It is adapted for this sample in three ways:
@@ -9,7 +9,7 @@ for the lab. It is adapted for this sample in three ways:
    environment variables are provided, writes the same summary through managed
    identity to `az://` storage.
 3. It exposes smoke/full profile knobs so the same script can support quick CPU
-   validation and larger optional GPU runs.
+   validation and larger GPU pressure tests.
 
 ## Files
 

@@ -1,6 +1,6 @@
 ---
-title: "AKS Flex Node + Anyscale on Azure"
-description: Use AKS Flex Node to extend a single AKS cluster to GPUs in other Azure regions, on-premises bare metal, or other clouds, then run distributed GPU or CPU workloads through Anyscale without changing workload code.
+title: "Run AI Where Your GPUs Are"
+description: Use AKS Flex Node to bring AI workloads to compute in another location, then use Anyscale on Azure to run Ray proof jobs and verify where the workers landed.
 sidebar_position: 1
 tags:
   - ai
@@ -32,30 +32,35 @@ export const Diagram = ({ children, caption }) => (
 
 ## Objective
 
-By the end of this lab you will be able to:
+AI teams often have a placement problem before they have a modeling problem. The
+workload is ready, but the GPU capacity may be in a different Azure region, in a
+lab datacenter, or in another cloud environment. AKS Flex Node gives AKS a way to use
+that Linux compute as worker capacity. Anyscale on Azure gives the team a managed
+Ray control plane for Jobs, compute profiles, and workload observability. Together,
+they let you run Ray AI/ML workloads where your compute and GPUs already are.
 
-- extend a single AKS cluster to worker nodes located in a **different Azure region, on-premises, or another cloud** using AKS Flex Node,
-- run **distributed AI training and inference workloads** across all attached nodes using Anyscale and Ray — without modifying workload code,
-- choose between a **CPU path** (any host, no GPU quota needed) and a **GPU path** (T4 nodes, NVIDIA driver pre-baked in the host image), and
-- produce machine-readable proof artifacts that confirm placement, saturation, and scaling behavior.
+By the end, you will have one AKS-backed Anyscale cloud with a Flex host joined
+from another region. The important part is the proof: the workload must show that
+the Ray worker ran on the Flex node, and the teardown gate must show that the
+current lab resources are gone. The CPU path gives you the cheapest repeatable
+run. If you have T4 quota in the Flex region, the GPU path proves a `GPU:1`
+worker landed on a Flex-hosted Tesla T4.
 
 ## Topology flexibility
 
-This lab uses **two Azure regions** — an AKS cluster homed in one region (`westus2`) with Flex hosts joined from a second region (`westus3` for the CPU path, or `southcentralus` in the validated T4 GPU run). That is only one example of what AKS Flex Node supports.
+This lab uses **two Azure regions**: an AKS cluster homed in `westus2` with Flex
+hosts joined from `westus3` for the CPU path, or `southcentralus` in the validated
+T4 GPU run. That is one supported Flex Node shape, not the only one.
 
 :::info What AKS Flex Node actually allows
-According to the [AKS Flex Node documentation](https://github.com/Azure/AKSFlexNode), any Linux host that can reach the AKS API server over outbound HTTPS can be joined as a worker node — including:
-
-- **Azure VMs in a different region** (as in this lab)
-- **On-premises bare metal or VMs** connected over ExpressRoute, VPN, or WireGuard
-- **VMs on other clouds** reachable via a routed network path
+According to the [AKS Flex Node documentation](https://github.com/Azure/AKSFlexNode), any Linux host that can reach the AKS API server over outbound HTTPS can join as a worker node. In this lab that host is an Azure VM in a different region, but the same pattern can apply to on-premises bare metal, on-premises VMs, or VMs in another cloud environment when the network path is in place.
 
 The host does not need to be in Azure. The key requirement is network reachability to the AKS API server and bidirectional pod-to-pod routing between the Flex host and AKS nodes. Swap `westus3` in this lab for your on-premises network range and the steps are identical.
 :::
 
 :::warning GPU support status
 GPU Flex Node support is listed as **"under active validation"** (alpha) in the AKS Flex Node repository.
-AKS Flex Node does **not** install the NVIDIA kernel driver — the host image must have the driver pre-baked.
+AKS Flex Node does **not** install the NVIDIA kernel driver. The host image must have the driver pre-baked.
 For GPU runs, use a Linux image with the matching NVIDIA driver already installed.
 The CPU path has no such constraint.
 :::
@@ -68,7 +73,7 @@ This lab is built so you can complete it end to end on either path. **The CPU pa
 | --- | --- | --- |
 | Flex host SKU | Any 4+ vCPU Linux VM | Standard_NC16as_T4_v3 or equivalent |
 | Quota needed | Standard DSv5 family in both regions | Standard NCASv3_T4 family in the Flex region |
-| Driver required | No | Yes — must be pre-baked in the host image |
+| Driver required | No | Yes, pre-baked in the host image |
 | Workload | `train.py --cpu-only` | `train.py` (GPU default) |
 | Evidence | Placement and scaling proof | Placement, GPU saturation, and scaling proof |
 
@@ -87,7 +92,7 @@ This lab is built so you can complete it end to end on either path. **The CPU pa
   - `Standard_NC16as_T4_v3` = 16 vCPU per node
   - Minimum: 16 vCPU in the Flex region (1 T4 Flex host)
   - Larger runs require quota for each additional Flex GPU host
-- Host image with NVIDIA driver pre-installed — this lab uses `microsoft-dsvm/ubuntu-hpc/2204`
+- Host image with NVIDIA driver pre-installed. This lab uses `microsoft-dsvm/ubuntu-hpc/2204`.
 
 :::tip Checking your quota
 
@@ -101,7 +106,7 @@ If your intended Flex region shows 0 available, use the CPU path, choose another
 
 ## Architecture
 
-The AKS cluster is homed in `westus2` and owns the Kubernetes control plane, Anyscale cloud binding, and home-region node pools. Flex hosts in `westus3` join the same cluster over VNet peering and appear as standard Kubernetes worker nodes. From Anyscale's perspective there is one cluster — it schedules Ray workers onto whichever nodes have capacity, regardless of region.
+The AKS cluster is homed in `westus2` and owns the Kubernetes control plane, Anyscale cloud binding, and home-region node pools. Flex hosts in the second region join the same cluster over VNet peering and appear as standard Kubernetes worker nodes. Anyscale sees one cluster and schedules Ray workers onto nodes that match the compute profile.
 
 <Diagram caption="Home region AKS cluster in westus2 with Flex expansion into westus3">
   <HomeRegionDiagram style={{ width: "100%", height: "auto", display: "block" }} />
@@ -117,13 +122,13 @@ Anyscale dispatches distributed training jobs by placing Ray workers across all 
 
 | Module | What you do | CPU | GPU |
 | --- | --- | --- | --- |
-| [1 — Environment Setup](./module-01-environment-setup) | Tooling, Azure auth, quota check, path decision | ✅ | ✅ |
-| [2 — AKS Foundation](./module-02-aks-foundation) | Deploy public AKS, storage, ACR, VNet peering | ✅ | ✅ |
-| [3 — Flex Node](./module-03-flex-node) | Provision Flex host, generate config, bootstrap, verify | ✅ | ✅ |
-| [4 — Anyscale Binding](./module-04-anyscale-binding) | Bind cloud, install operator, define compute profiles | ✅ | ✅ |
-| [5 — Autoscaling](./module-05-autoscaling) | Set quota-aware bounds, trigger and verify scale events | ✅ | ✅ |
-| [6 — Workload Proof](./module-06-workload-proof) | Submit distributed training, validate placement evidence | CPU only | GPU + saturation |
-| [7 — Teardown](./module-07-teardown) | Ordered destroy, residual check, idempotency replay | ✅ | ✅ |
+| [1: Environment Setup](./module-01-environment-setup) | Tooling, Azure auth, quota check, path decision | Yes | Yes |
+| [2: AKS Foundation](./module-02-aks-foundation) | Deploy public AKS, storage, ACR, VNet peering | Yes | Yes |
+| [3: Flex Node](./module-03-flex-node) | Provision Flex host, generate config, bootstrap, verify | Yes | Yes |
+| [4: Anyscale Binding](./module-04-anyscale-binding) | Bind cloud, install operator, define compute profiles | Yes | Yes |
+| [5: Preflight Gates](./module-05-autoscaling) | Set quota-aware bounds, verify routing, check GPU readiness when enabled | Yes | Yes |
+| [6: Workload Proof](./module-06-workload-proof) | Submit distributed training and validate placement evidence | CPU proof | GPU proof |
+| [7: Teardown](./module-07-teardown) | Ordered destroy, residual check, idempotency replay | Yes | Yes |
 
 ## Repository assets
 

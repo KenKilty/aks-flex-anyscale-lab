@@ -1,6 +1,6 @@
 ---
-title: "Module 6 — Run the Distributed Workload Proof"
-sidebar_label: "Module 6 — Run a Distributed AI Job Across Both Locations"
+title: "Module 6: Run the Distributed Workload Proof"
+sidebar_label: "Module 6: Run a Distributed AI Job Across Both Locations"
 description: Submit the deepspeed_finetune proof workload through Anyscale, collect per-worker placement evidence, and validate Flex worker placement.
 sidebar_position: 7
 tags:
@@ -12,21 +12,20 @@ tags:
 
 import Prerequisites from "../../src/components/SharedMarkdown/_prerequisites.mdx";
 
-This module runs the `deepspeed_finetune` proof workload — a Ray Train + DeepSpeed
+This module runs the `deepspeed_finetune` proof workload, a Ray Train + DeepSpeed
 distributed training script adapted for this lab. The Ray head lands on AKS CPU
 capacity in `westus2`; proof workers land on the Flex node in `westus3`. Each
 worker emits its hostname, region hint, and device details as structured job
 output. After the run, the proof harness extracts and validates that output so
 you can prove the workload executed on Flex capacity.
 
-## Objectives
+## What You Will Do
 
-By the end of this module you will be able to:
-
-- Submit the CPU or GPU proof through Anyscale after Gates 1 through 5 pass
-- Confirm the head pod lands on AKS CPU capacity and worker pods land on Flex capacity
-- Confirm per-worker region placement from machine-readable output
-- Validate the proof summary against the expected schema
+You will submit the proof through Anyscale after Gates 1 through 5 pass, then
+watch how the Ray head and worker pods land on different parts of the cluster.
+The module finishes by validating the proof summary and Kubernetes placement data,
+so you can show that the worker ran on Flex capacity instead of relying on a job
+status alone.
 
 ## Path differences
 
@@ -35,7 +34,7 @@ By the end of this module you will be able to:
 | Compute config | Created by `./scripts/run-anyscale-proof.sh --mode cpu` | Created by `./scripts/run-anyscale-proof.sh --mode gpu` |
 | Workers | CPU-only Ray actors on the Flex node | GPU-accelerated Ray Train workers on the Flex node |
 | Evidence | Placement + loss curve + log-emitted proof summary | Placement + GPU utilisation + loss curve |
-| Duration | ~10 min | ~20–40 min (includes autoscale wait) |
+| Duration | ~10 min | ~20-40 min (includes autoscale wait) |
 
 <Prerequisites
   tools={[
@@ -46,7 +45,7 @@ By the end of this module you will be able to:
   ]}
 />
 
-## Step 1 — Confirm Gate 5 can start
+## Step 1: Confirm Gate 5 can start
 
 Run the proof only after the Module 5 preflight checks pass. The Flex diagnostic pod
 must use normal `ClusterFirst` DNS and the Flex node must not carry the broad
@@ -66,16 +65,17 @@ vm-flex-flexany-dev-wus3   Ready   agent   22m   v1.31.1   agentpool=aksflexnode
 daemon set "kube-proxy-flex" successfully rolled out
 ```
 
-## Step 2 — Choose a run profile
+## Step 2: Choose a run profile
 
 Set `profile` in the workload call:
 
-- `smoke` — 1 epoch, 4 debug steps, 2 workers (fast validation, ~10 min)
-- `full` — all epochs, full dataset, up to 4 workers (full saturation, ~40 min GPU)
+Use `smoke` for a first run. It uses 1 epoch, 4 debug steps, and 2 workers, which
+usually finishes in about 10 minutes. Use `full` only when you want the longer
+run: all epochs, the full dataset path, and up to 4 workers for GPU saturation.
 
 For a first run, start with `smoke`.
 
-## Step 3 — CPU path — local smoke run
+## Step 3: CPU path local smoke run
 
 Validate the workload logic without a cluster:
 
@@ -99,15 +99,12 @@ Expected output:
 validated: .cache/workloads/deepspeed_finetune/smoke/proof-summary.json
 ```
 
-The proof summary schema includes:
+The proof summary schema records the run ID, experiment name, timestamp, profile,
+placement hints, loss curve, runtime counters, worker snapshots, and storage proof.
+The `storage_proof` section includes the managed-identity storage account,
+container, path, and fsspec/adlfs `az://` URI.
 
-- `run_id`, `experiment_name`, `timestamp_unix`, and profile fields
-- `placement`: expected regions and worker placement hints
-- `metrics`: loss curve and runtime counters
-- `worker_snapshot`: per-worker hostname, region_hint, and device
-- `storage_proof`: managed-identity storage account, container, path, and fsspec/adlfs `az://` URI
-
-## Step 4 — Submit through Anyscale (CPU path)
+## Step 4: Submit through Anyscale (CPU path)
 
 ```bash
 ./scripts/run-anyscale-proof.sh --mode cpu
@@ -129,7 +126,7 @@ capacity in `westus2`, place the Ray worker on `vm-flex-flexany-dev-wus3`, and k
 worker DNS policy as `ClusterFirst`.
 :::
 
-## GPU path — submit through Anyscale
+## GPU path: Submit through Anyscale
 
 Run this only after Module 5 reports `PASS M5-02 Flex GPU node available with
 allocatable GPU`. The GPU proof requires a GPU-ready Flex host image with NVIDIA
@@ -158,7 +155,7 @@ If the GPU worker pod stays Pending with a selector such as
 the helper applies the Flex GPU product label after confirming `nvidia.com/gpu`
 is allocatable.
 
-## Step 5 — Observe placement and job state
+## Step 5: Observe placement and job state
 
 ```bash
 kubectl get pods -n anyscale-operator -o wide | grep -E 'NAME|k-'
@@ -179,7 +176,7 @@ k-flex-proof-gpu-worker-group-0-fghij    1/1     Running   vm-flex-flexany-dev-w
 "PROOF_SUMMARY_JSON={...}"
 ```
 
-## Step 6 — Retrieve and validate the proof summary
+## Step 6: Retrieve and validate the proof summary
 
 For local smoke runs, the summary is written locally under `.cache/workloads/...`.
 For Anyscale job runs, `./scripts/run-anyscale-proof.sh` extracts the
@@ -233,7 +230,7 @@ Expected proof-summary shape:
 }
 ```
 
-## Step 7 — Verify placement
+## Step 7: Verify placement
 
 Open the proof summary and check the `placement` and `storage_proof` sections:
 
@@ -328,4 +325,4 @@ the worker pod on `agentpool=aksflexnodes` in the Flex region.
 
 ## Next step
 
-Proceed to **[Module 7 — Teardown and Replay](/docs/ai-workloads-on-aks/module-07-teardown)**.
+Proceed to **[Module 7: Teardown and Replay](/docs/ai-workloads-on-aks/module-07-teardown)**.

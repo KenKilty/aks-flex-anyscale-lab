@@ -1,8 +1,8 @@
 ---
-title: "Module 4 — Bind Anyscale and Configure Compute Profiles"
-description: Deploy Azure-native Anyscale through AzAPI, install the AKS operator extension, verify Gateway API health, and prepare CPU-first compute placement.
+title: "Module 4: Bind Anyscale and Configure Compute Profiles"
+description: Deploy Anyscale on Azure through AzAPI, install the AKS operator extension, verify Gateway API health, and prepare CPU-first compute placement.
 sidebar_position: 5
-sidebar_label: "Module 4 — Bind Anyscale"
+sidebar_label: "Module 4: Bind Anyscale"
 tags:
   - anyscale
   - aks
@@ -11,20 +11,19 @@ tags:
 
 import Prerequisites from "../../src/components/SharedMarkdown/_prerequisites.mdx";
 
-Anyscale uses a concept of a **cloud** that maps to a Kubernetes cluster with specific
-storage, identity, and compute resources registered to it. This module wires the AKS
-cluster you deployed in Module 2 to an Anyscale cloud, installs the operator, and
-verifies the Gateway API path that Anyscale uses to reach Ray services.
+This module connects the AKS cluster from Module 2 to Anyscale on Azure. In
+Anyscale, a **cloud** is the registered Kubernetes target plus its storage,
+identity, and compute settings. The module creates that cloud, installs the AKS
+operator extension, assigns user RBAC, and checks the Gateway API path Anyscale
+uses for Ray services.
 
-## Objectives
+## What You Will Do
 
-By the end of this module you will be able to:
-
-- Create an Anyscale cloud bound to the AKS cluster
-- Install the Anyscale operator via the AKS marketplace extension
-- Confirm the deploying user has the Azure-native Anyscale Platform administrator role
-- Verify the operator pod and Gateway API resources are healthy
-- Confirm the CPU-first compute placement contract before running the proof
+You will register the AKS cluster as an Anyscale cloud, install the AKS marketplace
+extension, and confirm the deploying user has the Anyscale Platform administrator
+role needed for the preview control plane. Before you move on, you will check the
+operator pod, Gateway API resource, and compute placement contract that Module 6
+depends on.
 
 <Prerequisites
   tools={[
@@ -50,7 +49,7 @@ stable first-party Terraform resources yet. Keep the AzAPI path for this worksho
 
 When a Ray job is submitted, Anyscale places Ray head and worker pods on nodes that
 match the compute config's resource requirements. Because the Flex host is a standard
-Kubernetes node, Anyscale schedules on it transparently — no workload changes needed.
+Kubernetes node, Anyscale can schedule onto it without workload code changes.
 
 :::info Preview feature
 Anyscale on Azure is currently in public preview. Cross-region scheduling onto Flex hosts
@@ -61,7 +60,7 @@ capture it in the evidence bundle (Module 6) and open an issue.
 ## Regional Prerequisites
 
 The Anyscale operator AKS extension is **not available in all regions**. Before deploying,
-ensure your AKS cluster is in one of these **supported regions**:
+confirm your AKS cluster is in a supported region:
 
 Supported regions can change over time and may differ between subscriptions.
 Always preflight extension availability against your exact target AKS cluster.
@@ -103,7 +102,7 @@ is not supported in region '<region>' for cluster type: ManagedClusters.
 returns `Microsoft.Anyscale.operator` for your cluster.
 :::
 
-## Step 1 — Authenticate to Anyscale
+## Step 1: Authenticate to Anyscale
 
 ```bash
 ANYSCALE_HOST=https://console.azure.anyscale.com \
@@ -116,7 +115,7 @@ Follow the browser prompt. After login, verify:
 .venv/bin/anyscale cloud list
 ```
 
-## Step 2 — Configure regions and enable Anyscale (if not already set)
+## Step 2: Configure regions and enable Anyscale (if not already set)
 
 **Important**: Module 2 should have configured your regions in `.env`. Verify that your
 AKS cluster is in a **supported region** (see "Regional Prerequisites" above).
@@ -133,23 +132,21 @@ TF_VAR_anyscale_enabled="true"        # Enable Anyscale operator
 TF_VAR_anyscale_platform_default_admin_assignment='{"enabled":true,"principal_type":"User","role_definition_name":"Anyscale Platform Administrator","scope":"subscription"}'
 ```
 
-**Rationale**:
-
-- Home region must support `Microsoft.Anyscale.operator` for your subscription.
-- Flex region must have quota for your selected Flex host VM size.
-- Cross-region peering demonstrates hybrid AKS + Flex architecture.
-- The default Anyscale Platform administrator assignment gives the current Azure
-  principal console-owner access for this preview lab.
+**Rationale**: the home region must support `Microsoft.Anyscale.operator` for your
+subscription, while the Flex region must have quota for your selected Flex host VM
+size. Cross-region peering gives the lab a real AKS plus Flex topology to prove.
+The default Anyscale Platform administrator assignment gives the current Azure
+principal console-owner access for this preview lab.
 
 If you deployed Module 2 to a different region pair, you must redeploy to a supported region
-before continuing with Module 4. See [Module 2 — Deploy the AKS Foundation](/docs/ai-workloads-on-aks/module-02-aks-foundation)
+before continuing with Module 4. See [Module 2: Deploy the AKS Foundation](/docs/ai-workloads-on-aks/module-02-aks-foundation)
 for guidance.
 
-## Step 3 — Deploy the Anyscale operator (Terraform)
+## Step 3: Deploy the Anyscale operator (Terraform)
 
 The Anyscale cloud resource and the AKS marketplace extension are managed by Terraform
 in `infra/terraform/anyscale.tf`. The Anyscale cloud resource uses AzAPI because the
-Azure-native Anyscale RP is a preview path.
+Anyscale on Azure RP is a preview path.
 
 With `.env` configured correctly (region and `TF_VAR_anyscale_enabled="true"`), deploy:
 
@@ -157,15 +154,11 @@ With `.env` configured correctly (region and `TF_VAR_anyscale_enabled="true"`), 
 ./scripts/anyscale-aks.sh apply
 ```
 
-This creates:
-
-- Azure-native Anyscale cloud resource through AzAPI
-- Current-principal `Anyscale Platform Administrator Role` assignment at subscription scope
-- AKS marketplace extension for the Anyscale operator
-- Gateway API resources for Anyscale ingress, including an explicit `anyscale-gateway`
-  resource when the extension does not create one itself
-- Workload Identity federation for secure authentication
-- RBAC bindings for operator access
+This creates the Anyscale on Azure cloud resource through AzAPI, assigns the
+current principal the `Anyscale Platform Administrator Role` at subscription scope,
+installs the AKS marketplace extension, and prepares Gateway API ingress for Ray
+services. Terraform also creates Workload Identity federation and the Kubernetes
+RBAC bindings the operator needs.
 
 Expected output:
 
@@ -176,7 +169,7 @@ azurerm_kubernetes_cluster_extension.anyscale_operator: Creation complete
 Apply complete!
 ```
 
-Expected duration: **10–15 minutes** (extension reconciliation is slow on first install).
+Expected duration: **10-15 minutes** (extension reconciliation is slow on first install).
 
 :::note User RBAC is a hard gate
 The lab assigns the deploying Azure principal the built-in
@@ -239,10 +232,10 @@ PASS M4-03 operator pods healthy
 PASS M4-04 current principal has Anyscale Platform Administrator Role at subscription scope
 ```
 
-## Step 4 — Verify the operator
+## Step 4: Verify the operator
 
-The helper waits for the marketplace extension, then ensures
-`anyscale-operator/anyscale-gateway` exists and is `Programmed=True`. Treat a missing
+The helper waits for the marketplace extension, then creates or verifies
+`anyscale-operator/anyscale-gateway` and checks for `Programmed=True`. Treat a missing
 Gateway as a hard stop; Anyscale jobs can submit but cannot reliably expose Ray
 services until this path is ready.
 
@@ -286,7 +279,7 @@ Expected output:
 cldrsrc_f3qm4fbbj8gggfp55ewkn5tkeh  flexany-dev-wus2  ACTIVE
 ```
 
-## Step 5 — Confirm compute placement contract
+## Step 5: Confirm compute placement contract
 
 The organized path uses the repository proof command in Module 6 to submit a CPU-only
 Ray job. The expected placement is:
@@ -307,4 +300,4 @@ Flex region, and Module 5 shows `nvidia.com/gpu` allocatable on the Flex node.
 
 ## Next step
 
-Proceed to **[Module 5 — Configure Autoscaling Profiles](/docs/ai-workloads-on-aks/module-05-autoscaling)**.
+Proceed to **[Module 5: Configure Autoscaling Profiles](/docs/ai-workloads-on-aks/module-05-autoscaling)**.

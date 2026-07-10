@@ -1,8 +1,8 @@
 ---
-title: "Module 7 — Teardown and Replay"
+title: "Module 7: Teardown and Replay"
 description: Remove all lab resources in the correct order, verify nothing is orphaned, and confirm that re-running the teardown command is a clean no-op.
 sidebar_position: 8
-sidebar_label: "Module 7 — Teardown"
+sidebar_label: "Module 7: Teardown"
 tags:
   - aks
   - terraform
@@ -17,14 +17,13 @@ Flex host unjoin, Kubernetes runtime resource removal, and `terraform destroy`.
 It then verifies that the Azure resource group is empty and that running the
 teardown command a second time is a no-op.
 
-## Objectives
+## What You Will Do
 
-By the end of this module you will be able to:
-
-- Tear down all lab resources cleanly from a single command
-- Understand the correct destruction order for AKS Flex Node deployments
-- Confirm no orphaned Azure resources remain after teardown
-- Replay the full lab from scratch using the same `.env` file
+You will tear down the lab from one command, but the order still matters. This
+module shows how active jobs, Anyscale resources, Flex host membership, Kubernetes
+runtime resources, and Terraform-managed Azure resources come apart cleanly. The
+final checks prove the current resource group is gone, Terraform state is empty,
+and the same `.env` file can drive a replay from scratch.
 
 <Prerequisites />
 
@@ -35,14 +34,14 @@ the VNet before the Flex host is unjoined, or destroying the AKS cluster before 
 Anyscale cloud is de-registered). The correct order is:
 
 1. Drain and stop active Anyscale jobs
-2. Delete the current lab's Azure-native Anyscale cloud resource before extension and AKS cluster teardown
+2. Delete the current lab's Anyscale on Azure cloud resource before extension and AKS cluster teardown
 3. Remove Flex host RBAC and unjoin the host
 4. Destroy Terraform-managed infrastructure (extension → cluster → networking → storage)
 5. Verify residual resource check
 
-## Step 1 — Drain active workloads
+## Step 1: Drain active workloads
 
-Ensure no jobs are running before teardown:
+Check that no jobs are running before teardown:
 
 ```bash
 .venv/bin/anyscale job list --status RUNNING
@@ -66,7 +65,7 @@ Expected output:
 Job <job-name> termination requested.
 ```
 
-## Step 2 — Destroy
+## Step 2: Destroy
 
 ```bash
 ./scripts/anyscale-aks.sh destroy
@@ -74,11 +73,11 @@ Job <job-name> termination requested.
 
 This runs `terraform destroy -auto-approve` with the same variable profile used
 to deploy. Terraform handles the ordering defined by `depends_on` blocks. If the
-final resource-group delete is blocked by residual Azure-native Anyscale RP
+final resource-group delete is blocked by residual Anyscale on Azure RP
 resources, the helper removes the remaining `Anyscale.Platform/clouds` resources and
 retries the destroy once. You should not need to delete those residuals manually.
 
-Expected duration: **10–20 minutes** (AKS cluster deletion is typically the longest step).
+Expected duration: **10-20 minutes** (AKS cluster deletion is typically the longest step).
 
 Expected output:
 
@@ -92,12 +91,12 @@ Destroy complete!
 
 :::warning Transient Azure errors during destroy
 Azure occasionally returns transient control-plane errors such as `AnotherOperationInProgress`.
-If the first destroy run fails, run it again — it is safe to retry and will continue
+If the first destroy run fails, run it again. It is safe to retry and will continue
 from where it stopped.
 :::
 
 :::note Anyscale RP residuals
-The Azure-native Anyscale cloud is created through an ARM deployment. On teardown,
+The Anyscale on Azure cloud is created through an ARM deployment. On teardown,
 Azure may delete the deployment record before the nested `Anyscale.Platform/clouds`
 and `cloudResources/default` resources disappear. The destroy helper handles this by
 calling the Anyscale RP delete API for those residuals before retrying the final
@@ -113,7 +112,7 @@ remove it. Do not keep retrying Terraform or Azure Portal deletes for a cloud th
 no longer exists in Azure ARM.
 :::
 
-## Step 3 — Verify residual resources
+## Step 3: Verify residual resources
 
 After destroy completes:
 
@@ -146,7 +145,7 @@ false
 
 `terraform state list` should print no resources.
 
-## Step 4 — Idempotency check
+## Step 4: Idempotency check
 
 Run destroy a second time to confirm it is a no-op:
 
@@ -202,15 +201,13 @@ Plan: 62 to add, 0 to change, 0 to destroy.
 ```
 
 The `.env` file is unchanged, so all variable values carry over. Re-applying is
-safe and idempotent — Terraform will create only the resources that do not exist.
+safe and idempotent. Terraform will create only the resources that do not exist.
 
 ## Congratulations
 
-You have completed the full lab:
-
-- Deployed a public AKS cluster in `westus2` with Terraform
-- Attached a Flex host from another Azure region
-- Bound Azure-native Anyscale through AzAPI, the AKS operator extension, and Gateway API
-- Ran CPU and optional GPU proof workloads across both locations
-- Produced machine-readable placement evidence proving workers ran on the Flex node
-- Torn down all resources cleanly and verified idempotency
+You have completed the full lab. You deployed a public AKS cluster in `westus2`,
+attached a Flex host from another Azure region, bound Anyscale on Azure through
+AzAPI and the AKS operator extension, and ran proof workloads across both
+locations. The important evidence is durable: machine-readable placement data
+showed workers running on the Flex node, and teardown proved the current lab
+resources and Terraform state were removed cleanly.

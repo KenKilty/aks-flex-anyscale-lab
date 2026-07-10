@@ -1,8 +1,8 @@
 ---
-title: "Module 5 — Configure Autoscaling Profiles"
+title: "Module 5: Configure Autoscaling Profiles"
 description: Confirm the CPU scale profile and final Gate 1-4 health checks before running the Anyscale proof.
 sidebar_position: 6
-sidebar_label: "Module 5 — Preflight Gates"
+sidebar_label: "Module 5: Preflight Gates"
 tags:
   - aks
   - autoscaling
@@ -11,18 +11,18 @@ tags:
 
 import Prerequisites from "../../src/components/SharedMarkdown/_prerequisites.mdx";
 
-Before running the workload proof, you need to confirm that the CPU scale profile,
-Flex service routing, Flex DNS, and Anyscale Gateway API path are healthy. This
-module is the final preflight for Gate 5; it does not run the proof workload.
+Before the proof job runs, the cluster needs a boring result: every prerequisite
+passes, and there is nothing left to debug in the workload path. This module checks
+the CPU scale profile, Flex service routing, Flex DNS, and Anyscale Gateway API
+path. It does not submit the proof workload.
 
-## Objectives
+## What You Will Do
 
-By the end of this module you will be able to:
-
-- Set quota-safe autoscaling bounds for the CPU node pool
-- Understand the difference between home-region AKS node pool autoscaling and Flex host capacity
-- Re-run the explicit Flex Ready, kube-proxy-flex, DNS, and Anyscale health checks
-- Confirm the cluster is ready for the CPU proof, or for the GPU proof when T4 quota is enabled
+You will set quota-safe bounds for the home-region CPU node pool and separate
+that autoscaling behavior from the fixed Flex host capacity. Then you will rerun
+the Flex Ready, kube-proxy-flex, DNS, HTTPS egress, and Anyscale Gateway checks so
+the proof job starts from a known-good cluster state. If you enabled the GPU path,
+this module also proves the Flex host exposes allocatable `nvidia.com/gpu`.
 
 <Prerequisites />
 
@@ -33,12 +33,12 @@ This lab has two distinct compute locations:
 | Location | Managed by | Scales how |
 | ---------- | ----------- | ------------ |
 | Home-region AKS CPU pool (`cpu`) | AKS cluster autoscaler | Adds nodes from Azure capacity on demand |
-| Flex host in `westus3` | Pre-provisioned in Module 3 | Fixed capacity — always `Ready` |
+| Flex host in `westus3` | Pre-provisioned in Module 3 | Fixed capacity, already `Ready` |
 
 The Flex host does **not** autoscale in this lab. It is pre-provisioned and permanently
 joined. Anyscale can place workers on it immediately without waiting for a scale event.
 
-## Step 1 — Review current pool configuration
+## Step 1: Review current pool configuration
 
 ```bash
 az aks nodepool list \
@@ -56,7 +56,7 @@ sys     Linux     Standard_D4s_v5         1        1           3           Syste
 cpu     Linux     Standard_D4s_v5         0        0           4           User
 ```
 
-## Step 2 — Set quota-aware bounds in `.env`
+## Step 2: Set quota-aware bounds in `.env`
 
 ### CPU path
 
@@ -91,10 +91,10 @@ ANYSCALE_PROOF_GPU_WORKER_COUNT="1"
 ```
 
 Only enable this after the CPU proof succeeds and you have confirmed T4 quota in
-the Flex region. GPU workers in this lab must run on the Flex node, not an AKS
-managed GPU pool.
+the Flex region. GPU workers in this lab must run on the Flex node. If they land
+on an AKS managed GPU node pool, the GPU proof failed.
 
-## Step 3 — Apply the profile
+## Step 3: Apply the profile
 
 ```bash
 ./scripts/anyscale-aks.sh apply
@@ -110,7 +110,7 @@ Expected output:
 Apply complete! Resources: 0 added, 1 changed, 0 destroyed.
 ```
 
-## Step 4 — Run the final preflight gates
+## Step 4: Run the final preflight gates
 
 If you enabled the GPU path, first confirm the Flex host driver and then install
 the NVIDIA device plugin before running the gate. The helper pins the plugin to
@@ -145,7 +145,7 @@ NVIDIA device plugin ready: 1 allocatable GPU(s) in pool aksflexnodes
 ```
 
 Use the gate script instead of pasting long diagnostic pods by hand. It checks the
-CPU scale profile, optional GPU pool setting, Flex node readiness, Flex service
+CPU scale profile, GPU settings when enabled, Flex node readiness, Flex service
 routing, Flex DNS, Flex HTTPS egress, AKS-to-Flex pod reachability, and the
 Anyscale extension/Gateway path.
 
@@ -171,7 +171,7 @@ The helper writes raw pod logs and Kubernetes JSON under
 `.github/agents/state/m5-flex-network/`. If a check fails, use that directory first;
 it contains the short-lived diagnostic pod output before cleanup.
 
-## Step 5 — Inspect Anyscale extension and Gateway health
+## Step 5: Inspect Anyscale extension and Gateway health
 
 The gate script already checked this. Use these commands when you want the raw
 extension and Gateway details.
@@ -206,7 +206,7 @@ capacity, Flex-only service routing, ClusterFirst DNS, and Anyscale Gateway API 
 already healthy.
 :::
 
-## Step 6 — Confirm no stale proof pods are active
+## Step 6: Confirm no stale proof pods are active
 
 ```bash
 kubectl get pods -A -o wide --field-selector spec.nodeName="$FLEX_NODE"
@@ -245,4 +245,4 @@ use `wus3`, while the validated T4 GPU path uses `scus`.
 
 ## Next step
 
-Proceed to **[Module 6 — Run the Workload Proof](/docs/ai-workloads-on-aks/module-06-workload-proof)**.
+Proceed to **[Module 6: Run the Workload Proof](/docs/ai-workloads-on-aks/module-06-workload-proof)**.

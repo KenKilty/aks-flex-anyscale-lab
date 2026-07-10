@@ -1,3 +1,5 @@
+<!-- markdownlint-disable MD041 -->
+
 ## Prerequisites
 
 Before you begin you need:
@@ -16,7 +18,7 @@ Before you begin you need:
         {tool.url
           ? <a href={tool.url} target="_blank" rel="noopener noreferrer">{tool.name}</a>
           : tool.name}
-        {tool.description && ` — ${tool.description}`}
+        {tool.description && `: ${tool.description}`}
       </li>
     ))}
   </ul>

@@ -3,8 +3,8 @@ import type * as Preset from "@docusaurus/preset-classic";
 import { themes as prismThemes } from "prism-react-renderer";
 
 const config: Config = {
-  title: "AKS LABS",
-  tagline: "AKS Flex Node + Anyscale on Azure — distributed AI across any location",
+  title: "Run AI Where Your GPUs Are",
+  tagline: "Use AKS Flex Node and Anyscale on Azure to bring Ray AI/ML workloads to reachable compute.",
   url: "https://example.invalid",
   baseUrl: "/",
   onBrokenLinks: "throw",
@@ -38,7 +38,7 @@ const config: Config = {
   ],
   themeConfig: {
     navbar: {
-      title: "AKS LABS CANDIDATE",
+      title: "Run AI Where Your GPUs Are",
       items: [
         {
           type: "docSidebar",
