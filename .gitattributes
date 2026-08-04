@@ -1,0 +1,27 @@
+# Normalize line endings so Windows clones do not break WSL/Linux tooling.
+#
+# Without this, Git's default core.autocrlf=true on Windows checks out shell
+# scripts and Terraform files with CRLF. WSL bash then fails with errors such
+# as "set: pipefail: invalid option" and Terraform inline local-exec scripts
+# fail with "Syntax error: \"elif\" unexpected".
+* text=auto eol=lf
+
+# Files that must always be LF because they are executed by Linux shells or
+# parsed by tools that do not tolerate carriage returns.
+*.sh    text eol=lf
+*.bash  text eol=lf
+*.tf    text eol=lf
+*.tfvars text eol=lf
+*.hcl   text eol=lf
+*.py    text eol=lf
+*.yaml  text eol=lf
+*.yml   text eol=lf
+*.json  text eol=lf
+
+# Binary assets must never be converted.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
