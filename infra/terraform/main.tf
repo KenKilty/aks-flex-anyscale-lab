@@ -67,6 +67,12 @@ module "identity" {
   operator_identity     = var.anyscale_operator_identity
   storage_data_scope_id = module.storage.container_id
   tags                  = var.tags
+
+  # The role assignment scope (module.storage.container_id) is a name-derived
+  # string, so Terraform cannot infer that it must wait for the storage account
+  # and container to exist. Without this, the blob RBAC assignment races storage
+  # creation and fails with ParentResourceNotFound (404). Force correct ordering.
+  depends_on = [module.storage]
 }
 
 module "acr" {

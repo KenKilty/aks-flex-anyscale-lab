@@ -18,7 +18,7 @@ locals {
     log_analytics              = "log-${local.suffix}"
     ampls                      = "ampls-${local.suffix}"
     user_assigned_id           = "id-anyscale-operator-${local.suffix}"
-    storage_account            = substr("st${local.suffix_alt}", 0, 24)
+    storage_account            = substr("st${local.suffix_alt}${substr(replace(var.azure_subscription_id, "-", ""), 0, 6)}", 0, 24)
     acr                        = substr("cr${local.suffix_alt}", 0, 50)
     flex_vnet                  = "vnet-${local.flex_suffix}"
     flex_subnet                = "snet-flex-hosts-${local.flex_suffix}"
