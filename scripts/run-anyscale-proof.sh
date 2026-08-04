@@ -54,6 +54,9 @@ die() {
   exit 1
 }
 
+# Never leave the placement watcher running if the script exits early.
+trap 'stop_placement_watcher 2>/dev/null || true' EXIT
+
 need_cmd() {
   command -v "$1" >/dev/null 2>&1 || die "missing required command: $1"
 }
@@ -115,7 +118,18 @@ load_names() {
   CLOUD_NAME="${TF_VAR_project}-${TF_VAR_environment}-${TF_VAR_region_short}"
   export RESOURCE_GROUP_NAME="rg-${TF_VAR_project}-${TF_VAR_environment}-${TF_VAR_region_short}"
   export CLUSTER_NAME="aks-${TF_VAR_project}-${TF_VAR_environment}-${TF_VAR_region_short}"
-  STORAGE_ACCOUNT="$(printf 'st%s%s%s' "${TF_VAR_project}" "${TF_VAR_environment}" "${TF_VAR_region_short}" | tr '[:upper:]' '[:lower:]' | cut -c1-24)"
+  # Storage account names are globally unique, so the deployed name does not
+  # always match the derived pattern (a name collision forces a suffix). Deriving
+  # it here a second time silently disagrees with Terraform and the workload then
+  # fails with an unresolvable blob host. Prefer an explicit override, then the
+  # real name from Terraform state, and only derive as a last resort.
+  STORAGE_ACCOUNT="${ANYSCALE_PROOF_STORAGE_ACCOUNT:-}"
+  if [[ -z "${STORAGE_ACCOUNT}" ]]; then
+    STORAGE_ACCOUNT="$(terraform -chdir="${ROOT_DIR}/infra/terraform" output -raw storage_account_name 2>/dev/null || true)"
+  fi
+  if [[ -z "${STORAGE_ACCOUNT}" ]]; then
+    STORAGE_ACCOUNT="$(printf 'st%s%s%s' "${TF_VAR_project}" "${TF_VAR_environment}" "${TF_VAR_region_short}" | tr '[:upper:]' '[:lower:]' | cut -c1-24)"
+  fi
   STORAGE_CONTAINER="${TF_VAR_project}-${TF_VAR_environment}-blob"
 }
 
@@ -165,18 +179,73 @@ check_flex_proof_preflight() {
   lab_gate_anyscale_gateway_ready "${ARTIFACT_DIR}"
 }
 
+PLACEMENT_WATCHER_PID=""
+
+# Anyscale deletes the Ray pods as soon as a job reaches a terminal state, so
+# querying Kubernetes after `anyscale job wait` returns finds nothing. Snapshot
+# the Ray pods while the job is still running and accumulate the union of every
+# pod observed, so the head and the Flex worker are both captured even when
+# their lifetimes do not overlap.
+placement_capture_file() {
+  printf '%s/proofs/%s-kubernetes-pods.captured.json' "${ARTIFACT_DIR}" "$1"
+}
+
+start_placement_watcher() {
+  local job_name="$1"
+  local captured
+  captured="$(placement_capture_file "${job_name}")"
+  rm -f "${captured}" "${captured}.new" "${captured}.merged"
+
+  (
+    while true; do
+      if kubectl -n "${TF_VAR_anyscale_operator_namespace}" get pods \
+        -l "app.kubernetes.io/name=${job_name}" \
+        -o json >"${captured}.new" 2>/dev/null; then
+        if [[ "$(jq '.items | length' "${captured}.new" 2>/dev/null || echo 0)" -gt 0 ]]; then
+          if [[ -f "${captured}" ]]; then
+            if jq -s '{items: ([.[0].items[], .[1].items[]] | group_by(.metadata.name) | map(.[-1]))}' \
+              "${captured}" "${captured}.new" >"${captured}.merged" 2>/dev/null; then
+              mv "${captured}.merged" "${captured}"
+            fi
+          else
+            cp "${captured}.new" "${captured}"
+          fi
+        fi
+      fi
+      sleep 5
+    done
+  ) &
+  PLACEMENT_WATCHER_PID=$!
+}
+
+stop_placement_watcher() {
+  [[ -n "${PLACEMENT_WATCHER_PID}" ]] || return 0
+  kill "${PLACEMENT_WATCHER_PID}" 2>/dev/null || true
+  wait "${PLACEMENT_WATCHER_PID}" 2>/dev/null || true
+  PLACEMENT_WATCHER_PID=""
+}
+
 collect_kubernetes_placement_evidence() {
   local job_name="$1"
   local mode="$2"
-  local pods_json nodes_json placement_file
+  local pods_json nodes_json placement_file captured
 
   pods_json="${ARTIFACT_DIR}/proofs/${job_name}-kubernetes-pods.raw.json"
   nodes_json="${ARTIFACT_DIR}/proofs/${job_name}-kubernetes-nodes.raw.json"
   placement_file="${ARTIFACT_DIR}/proofs/${job_name}-kubernetes-placement.json"
+  captured="$(placement_capture_file "${job_name}")"
 
   kubectl -n "${TF_VAR_anyscale_operator_namespace}" get pods \
     -l "app.kubernetes.io/name=${job_name}" \
     -o json >"${pods_json}"
+
+  # Fall back to the in-run snapshot when the live query is empty, which is the
+  # normal case once the cluster has been torn down.
+  if [[ "$(jq '.items | length' "${pods_json}" 2>/dev/null || echo 0)" -eq 0 ]] &&
+    [[ -s "${captured}" ]]; then
+    cp "${captured}" "${pods_json}"
+  fi
+
   kubectl get nodes -o json >"${nodes_json}"
 
   jq -n \
@@ -498,6 +567,8 @@ submit_job_for_mode() {
 
   [[ "${submit_ok}" == "true" ]] || die "job submit failed after ${max_submit_attempts} attempts for ${job_name}"
 
+  start_placement_watcher "${job_name}"
+
   set +e
   .venv/bin/anyscale job wait \
     --name "${job_name}" \
@@ -505,6 +576,8 @@ submit_job_for_mode() {
     --timeout-s 1800
   wait_rc=$?
   set -e
+
+  stop_placement_watcher
 
   .venv/bin/anyscale job status \
     --name "${job_name}" \
