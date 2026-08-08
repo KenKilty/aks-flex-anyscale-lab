@@ -20,6 +20,7 @@ variables {
   region_short          = "wus3"
   flex_region           = "westus2"
   flex_region_short     = "wus2"
+  flex_host_admin_ssh_public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMQK9/E/MPH5nsjSgjIZ4YPpsUv+LwE1F8oLJxC7l7N5 terraform-test"
 
   vnet_address_space = ["10.50.0.0/16"]
   subnet_cidrs = {

@@ -161,7 +161,7 @@ variable "anyscale_operator_serviceaccount" {
 
 variable "flex_host_enabled" {
   type    = bool
-  default = false
+  default = true
 }
 
 variable "flex_host_vm_size" {
@@ -177,6 +177,11 @@ variable "flex_host_admin_username" {
 variable "flex_host_admin_ssh_public_key" {
   type    = string
   default = ""
+
+  validation {
+    condition     = !var.flex_host_enabled || trimspace(var.flex_host_admin_ssh_public_key) != ""
+    error_message = "flex_host_admin_ssh_public_key must be set when flex_host_enabled is true."
+  }
 }
 
 variable "flex_host_public_ip_enabled" {

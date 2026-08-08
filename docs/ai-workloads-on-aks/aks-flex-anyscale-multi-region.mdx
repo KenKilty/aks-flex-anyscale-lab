@@ -45,15 +45,13 @@ the Flex node in Region B. Together, these results show where the workload ran
 without relying on a dashboard alone.
 :::
 
-## Prerequisites
+## Before you begin
 
-- An Azure subscription with permission to create AKS, networking, storage, and monitoring resources
-- Azure CLI installed and authenticated
-- Terraform 1.9 or later
-- Basic familiarity with AKS, Kubernetes, and managed identities
+Module 1 lists the Azure permissions, local tools, regional quota, and CPU or GPU
+host requirements to check before you create any resources.
 
-Before you deploy anything, you will check the regional quota and host
-requirements for your CPU or GPU route.
+Review [Module 1: Prepare Your Environment](./module-01-environment-setup) before
+you begin, even if you have run another AKS lab in the same terminal.
 
 ## Architecture
 
@@ -123,9 +121,13 @@ confirm that the Ray head ran in Region A and the worker ran in Region B.
 | Module | What you do |
 | --- | --- |
 | [1: Prepare Your Environment](./module-01-environment-setup) | Sign in and check the tools and quota you'll need, then choose the CPU or GPU path available in your Azure environment. |
-| [2: Build the AKS Foundation](./module-02-aks-foundation) | Create the AKS cluster, storage, a container registry, and the cross-region networking that will connect AKS to the Flex host. |
-| [3: Connect a Flex Node](./module-03-flex-node) | Provision a Flex host in a second region, join it to your AKS cluster as a Flex node, and verify that pods can communicate across both regions. |
+| [2: Build the AKS Foundation](./module-02-aks-foundation) | Create the AKS cluster, storage, a container registry, the Flex VM, and the cross-region networking between them. |
+| [3: Connect a Flex Node](./module-03-flex-node) | Join the provisioned VM to your AKS cluster as a Flex node, and verify that pods can communicate across both regions. |
 | [4: Connect Anyscale](./module-04-anyscale-binding) | Add the Anyscale cloud, deploy the Anyscale operator, and configure the Gateway so you can submit and observe Ray Jobs. |
 | [5: Review Scaling and Readiness](./module-05-autoscaling) | Inspect AKS scaling behavior, confirm Flex networking is working, and verify that the cluster is ready for the distributed workload. |
 | [6: Run the Workload](./module-06-workload-results) | Submit a distributed fine-tuning job, then compare its summary with Kubernetes placement data to see where the Ray head and worker pods ran. |
 | [7: Remove the Environment](./module-07-teardown) | Stop active jobs, delete the Azure resources you created, and confirm that both resource groups and Terraform state are empty. |
+
+Start with **[Module 1: Prepare Your Environment](./module-01-environment-setup)**.
+It validates your workstation and subscription without creating Azure resources;
+the first deployment happens in Module 2.

@@ -4,7 +4,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_FILE="${ANYSCALE_AKS_ENV_FILE:-${ROOT_DIR}/.env}"
-GATE_SCRIPT="${ROOT_DIR}/scripts/validate-lab-gates.sh"
+CHECK_SCRIPT="${ROOT_DIR}/scripts/validate-lab-gates.sh"
 STATE_DIR="${ROOT_DIR}/.github/agents/state"
 VALIDATION_RESULTS_DIR="${ROOT_DIR}/.cache/lab-validation"
 PHASE_RESULTS_FILE="${STATE_DIR}/e2e-phase-results.json"
@@ -127,14 +127,14 @@ usage() {
 Usage: ./scripts/run-lab-e2e.sh <phase>
 
 Phases:
-  foundation   Run Modules 1-2 apply flow and Module 2 hard gate.
-  flex         Run Module 3 apply/bootstrap flow and Module 3 hard gate.
-  anyscale     Run Module 4 apply flow and Module 4 hard gate.
-  autoscale    Run Module 5 gate checks.
+  foundation   Run Modules 1-2 apply flow and Module 2 checks.
+  flex         Run Module 3 configuration, bootstrap, and checks.
+  anyscale     Run Module 4 apply flow and checks.
+  autoscale    Run Module 5 checks.
   results-cpu  Run the Module 6 Anyscale CPU workload.
   results-gpu  Run the Module 6 Anyscale GPU workload.
   results      Run the Module 6 Anyscale CPU then GPU workloads.
-  teardown     Run destroy and Module 7 teardown gate.
+  teardown     Run destroy and Module 7 teardown checks.
   all          Run foundation, flex, anyscale, autoscale, results, teardown in order.
 EOF
 }
@@ -142,26 +142,25 @@ EOF
 phase_foundation() {
   run_step "Module 1 doctor" "${ROOT_DIR}/scripts/anyscale-aks.sh" doctor &&
     run_step "Module 2 apply" "${ROOT_DIR}/scripts/anyscale-aks.sh" apply &&
-    run_step "Module 2 gate" "${GATE_SCRIPT}" m2
+    run_step "Module 2 checks" "${CHECK_SCRIPT}" m2
 }
 
 phase_flex() {
-  run_step "Module 3 apply" "${ROOT_DIR}/scripts/anyscale-aks.sh" apply &&
-    run_step "Module 3 flex-config" "${ROOT_DIR}/scripts/anyscale-aks.sh" flex-config &&
+  run_step "Module 3 flex-config" "${ROOT_DIR}/scripts/anyscale-aks.sh" flex-config &&
     run_step "Module 3 flex-bootstrap" "${ROOT_DIR}/scripts/anyscale-aks.sh" flex-bootstrap &&
-    run_step "Module 3 gate" "${GATE_SCRIPT}" m3
+    run_step "Module 3 checks" "${CHECK_SCRIPT}" m3
 }
 
 phase_anyscale() {
   run_step "Module 4 apply" "${ROOT_DIR}/scripts/anyscale-aks.sh" apply &&
-    run_step "Module 4 gate" "${GATE_SCRIPT}" m4
+    run_step "Module 4 checks" "${CHECK_SCRIPT}" m4
 }
 
 phase_autoscale() {
   if [[ "${ANYSCALE_FLEX_GPU_ENABLED:-false}" == "true" || "${TF_VAR_gpu_pool_configs}" != "{}" ]]; then
     run_step "Module 5 NVIDIA device plugin" "${ROOT_DIR}/scripts/install-nvidia-device-plugin.sh" || return 1
   fi
-  run_step "Module 5 gate" "${GATE_SCRIPT}" m5
+  run_step "Module 5 checks" "${CHECK_SCRIPT}" m5
 }
 
 phase_results() {
@@ -182,7 +181,7 @@ phase_results_gpu() {
 
 phase_teardown() {
   run_step "Module 7 destroy" "${ROOT_DIR}/scripts/anyscale-aks.sh" destroy &&
-    run_step "Module 7 gate" "${GATE_SCRIPT}" teardown
+    run_step "Module 7 checks" "${CHECK_SCRIPT}" teardown
 }
 
 write_run_metadata() {
@@ -207,7 +206,7 @@ main() {
   need_cmd terraform
   need_cmd kubectl
   need_cmd python3
-  [[ -x "${GATE_SCRIPT}" ]] || chmod +x "${GATE_SCRIPT}"
+  [[ -x "${CHECK_SCRIPT}" ]] || chmod +x "${CHECK_SCRIPT}"
 
   source_env
   load_names

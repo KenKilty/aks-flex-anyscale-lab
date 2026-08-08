@@ -13,16 +13,16 @@ tags:
 import Cleanup from "../../src/components/SharedMarkdown/_cleanup.mdx";
 
 In this setup, you will deploy a public AKS cluster in **Region A**, along with
-Azure Blob Storage, Azure Container Registry, Log Analytics, and a peered VNet
-for **Region B**. One Terraform apply creates the cluster and the Azure resources
-it needs before the Flex host joins.
+Azure Blob Storage, Azure Container Registry, Log Analytics, and a Flex VM in a
+peered VNet in **Region B**. One Terraform apply creates both compute locations
+and the Azure resources they need before the Flex VM joins AKS.
 
 ## What You Will Do
 
-You will deploy the public AKS cluster, storage, registry, observability, and
-network peering that the rest of the lab needs. After the apply, you will get a
-kubeconfig, check that the cluster is healthy, and confirm the Flex-region VNet
-is already peered before any Flex host joins.
+You will deploy the public AKS cluster, Flex VM, storage, registry, observability,
+and network peering that the rest of the lab needs. After the apply, you will get
+a kubeconfig, check that the cluster is healthy, and confirm both VNets are
+peered before the Flex VM joins AKS.
 
 ## Architecture overview
 
@@ -30,13 +30,13 @@ is already peered before any Flex host joins.
 Region A (AKS home region)             Region B (Flex host region)
 ─────────────────────────────────      ───────────────────────────
   AKS cluster: aks-...-<region-a-short>  VNet: vnet-...-<region-b-short>
-  VNet: vnet-...-<region-a-short>        subnet for Flex hosts
-  Storage, ACR, Log Analytics            (Flex host joins after this foundation)
+  VNet: vnet-...-<region-a-short>        Flex VM: vm-flex-...-<region-b-short>
+  Storage, ACR, Log Analytics            (the VM joins AKS in Module 3)
   ↕ VNet peering ↔──────────────────────↕
 ```
 
-Terraform provisions both sides of the VNet peering now, so the cross-region
-network path is ready before you create and join the Flex host.
+Terraform creates both sides of the VNet peering before it creates the Flex VM,
+so the host has a cross-region network path when you join it to AKS.
 
 Terraform creates AKS with no built-in CNI, then installs upstream Cilium with
 cluster-pool IPAM, a VXLAN tunnel, and kube-proxy replacement. Cilium on the AKS
@@ -52,7 +52,7 @@ Keep Anyscale disabled while Terraform builds the AKS foundation. Confirm:
 grep -E 'azure_location|region_short|flex_region|anyscale_enabled' .env
 ```
 
-Expected output:
+Expected plan shape:
 
 ```text
 TF_VAR_azure_location="<region-a-azure-name>"
@@ -75,7 +75,7 @@ Region B stays a separate reachable location and must be rechecked for CPU quota
 ./scripts/anyscale-aks.sh plan
 ```
 
-Expected output:
+Example output:
 
 ```text
 Terraform will perform the following actions:
@@ -110,9 +110,10 @@ Outputs:
   aks_cluster_name = "aks-flexany-dev-<region-a-short>"
   aks_api_server_fqdn = "aks-flexany-dev-<region-a-short>-xxxxx.hcp.<region-a>.azmk8s.io"
   flex_vnet_id = "/subscriptions/.../vnet-flexany-dev-<region-b-short>"
+  flex_host_vm_name = "vm-flex-flexany-dev-<region-b-short>"
 ```
 
-:::note Before you connect the Flex node
+:::caution Before you connect the Flex node
 Continue only after AKS is running and both VNet peerings report `Connected` and
 `Succeeded`. The Flex host needs that network path before it can join the cluster.
 :::
@@ -130,7 +131,7 @@ az aks get-credentials \
   --overwrite-existing
 ```
 
-Expected output:
+Example output:
 
 ```text
 Merged "aks-flexany-dev-<region-a-short>" as current context in /Users/operator/.kube/config
@@ -147,8 +148,8 @@ Expected output:
 
 ```text
 NAME                                STATUS   ROLES   AGE   VERSION   INTERNAL-IP
-aks-sys-28211802-vmss000000         Ready    agent   12m   v1.34.6   10.50.4.4
-aks-cpu-28211802-vmss000000         Ready    agent   10m   v1.34.6   10.50.4.35
+<system-node-name>                  Ready    agent   <age> <version> <private-ip>
+<cpu-node-name>                     Ready    agent   <age> <version> <private-ip>
 
 NAME                                  READY   STATUS    RESTARTS   AGE
 coredns-6d8f9d9b9f-abcde              1/1     Running   0          10m
@@ -158,13 +159,23 @@ kube-proxy-abcde                      1/1     Running   0          10m
 
 You should see one `sys` node and one `cpu` node in `Ready` state. The CPU pool
 starts with `min_count=1` and can scale to four nodes. The default CPU profile
-does not create an AKS GPU pool.
+does not create an AKS GPU pool. AKS can run additional system pods that are not
+shown in the example. For every listed pod, check that `STATUS` is `Running` and
+that `READY` shows all expected containers ready.
 
 ## Step 6: Verify the Cilium foundation
 
 Terraform waits for the Cilium agent and Envoy DaemonSets to become ready on the
 AKS nodes before the apply completes. Check the live network profile and Cilium
-release before you provision the Flex host:
+release before you provision the Flex host. The three commands are independent
+views of the same foundation:
+
+1. The AKS network profile proves that no built-in CNI owns pod networking and
+  shows the pod and service CIDRs.
+2. The Helm values prove that Cilium uses cluster-pool IPAM, VXLAN, and kube-proxy
+  replacement.
+3. The pod list proves that the Cilium agent and Envoy are running on the AKS
+  nodes.
 
 ```bash
 source .env
@@ -193,8 +204,10 @@ Expected network profile:
 
 The Cilium values include `cluster-pool`, `tunnel`, `vxlan`, and
 `kubeProxyReplacement: true`. They follow the upstream AKS Flex Node Cilium
-sample. Keep this command output; it records the CNI configuration that the Flex
-node will use when it joins.
+sample. The final pod list must show the Cilium and Cilium Envoy pods in
+`Running` state on each current AKS node. Keep all three command outputs; together
+they record the CNI configuration and current agents that the Flex node will use
+when it joins.
 
 ## Step 7: Verify the cross-region network connection
 
@@ -215,7 +228,7 @@ az network vnet peering list \
   -o table
 ```
 
-Expected output:
+Expected fields:
 
 ```text
 Name         ResourceGroup          PeeringState    ProvisioningState
@@ -224,11 +237,12 @@ aks-to-flex  <resource-group>       Connected       Succeeded
 flex-to-aks  <resource-group>       Connected       Succeeded
 ```
 
-Both `aks-to-flex` and `flex-to-aks` peerings should show `Succeeded`.
-Terraform creates both directions. Seeing both rows in `Succeeded` confirms the
-bidirectional VNet path is ready before the Flex VM exists.
+Terraform creates both directions. Both `aks-to-flex` and `flex-to-aks` must show
+`PeeringState=Connected` and `ProvisioningState=Succeeded`. Do not continue while
+either direction is disconnected, failed, or still provisioning. This confirms
+the network path before the Flex VM joins AKS.
 
-## Results to keep
+## Success evidence
 
 You can move on when the `sys` node pool is `Ready`, Cilium and Cilium Envoy are
 running, and both VNet peerings show `Succeeded`. Keep the network profile,
@@ -238,6 +252,6 @@ host joins.
 
 ## Next step
 
-Proceed to **[Module 3: Attach a Flex Node](/docs/ai-workloads-on-aks/module-03-flex-node)**.
+Proceed to **[Module 3: Connect a Flex Node](/docs/ai-workloads-on-aks/module-03-flex-node)**.
 
 <Cleanup />

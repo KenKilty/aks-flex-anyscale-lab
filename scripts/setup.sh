@@ -131,7 +131,7 @@ ensure_defaults() {
   [[ -n "${TF_VAR_anyscale_release_train:-}" ]] || TF_VAR_anyscale_release_train="Stable"
   [[ -n "${TF_VAR_anyscale_gateway_name:-}" ]] || TF_VAR_anyscale_gateway_name="anyscale-gateway"
   [[ -n "${TF_VAR_anyscale_gateway_hostname:-}" ]] || TF_VAR_anyscale_gateway_hostname=""
-  [[ -n "${TF_VAR_flex_host_enabled:-}" ]] || TF_VAR_flex_host_enabled="false"
+  [[ -n "${TF_VAR_flex_host_enabled:-}" ]] || TF_VAR_flex_host_enabled="true"
   [[ -n "${TF_VAR_flex_host_vm_size:-}" ]] || TF_VAR_flex_host_vm_size="Standard_D4s_v5"
   [[ -n "${TF_VAR_flex_host_admin_username:-}" ]] || TF_VAR_flex_host_admin_username="azureoperator"
   [[ -n "${TF_VAR_flex_host_public_ip_enabled:-}" ]] || TF_VAR_flex_host_public_ip_enabled="true"

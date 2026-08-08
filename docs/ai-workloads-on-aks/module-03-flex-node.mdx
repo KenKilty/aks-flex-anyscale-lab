@@ -1,6 +1,6 @@
 ---
 title: "Module 3: Connect a Flex Node"
-description: Create the Flex host, join it to AKS, and verify that workloads can communicate across both regions.
+description: Join the provisioned Flex host to AKS and verify that workloads can communicate across both regions.
 sidebar_position: 4
 sidebar_label: "Module 3: Connect a Flex Node"
 tags:
@@ -9,16 +9,17 @@ tags:
   - networking
 ---
 
-In this setup, you will create a Linux VM in **Region B** and join it to the AKS
+Module 2 created a Linux VM in **Region B**. You will now join it to the AKS
 cluster in **Region A** as an AKS Flex node. Cilium and Envoy run on that node,
 giving its pods addresses and a network path to pods on the AKS node pools.
 
 ## What You Will Do
 
-You will verify the no-CNI AKS profile, enable the Flex host, generate a join
-configuration from the current stable AKS Flex Node release, and bootstrap the
-host. You will then schedule test pods and confirm Cilium networking, DNS, HTTPS
-access, and traffic between the AKS and Flex nodes before connecting Anyscale.
+You will verify the no-CNI AKS profile, inspect the provisioned Flex VM, generate
+a join configuration from the current stable AKS Flex Node release, and
+bootstrap the host. You will then schedule test pods and confirm Cilium
+networking, DNS, HTTPS access, and traffic between the AKS and Flex nodes before
+connecting Anyscale.
 
 ## How Flex networking works
 
@@ -102,14 +103,14 @@ The foundation prints the Cilium cluster-pool range:
 The `podCidr` value must equal `TF_VAR_cilium_pod_cidr` in `.env`. It is the
 range Cilium allocates across both locations.
 
-## Step 2: Enable the Flex host
+## Step 2: Check the provisioned Flex host
 
-The upstream AKS Flex Node Cilium lab validates Ubuntu 24.04. Check that your CPU
-profile uses that image, then enable the host in `.env`:
+The upstream AKS Flex Node Cilium lab tests Ubuntu 24.04. Check the selected host
+image and the VM name created in Module 2:
 
 ```bash
 grep '^TF_VAR_flex_host_source_image_reference=' .env
-TF_VAR_flex_host_enabled="true"
+./scripts/anyscale-aks.sh output -raw flex_host_vm_name
 ```
 
 For the CPU path, the image line must include `Canonical`, `ubuntu-24_04-lts`,
@@ -118,15 +119,9 @@ during environment setup. A GPU-ready image includes the NVIDIA drivers for the
 selected VM; Module 5 installs the Kubernetes device plugin that advertises that
 GPU to workloads.
 
-Then create the VM and its peered network attachment:
-
-```bash
-./scripts/anyscale-aks.sh apply
-```
-
-Terraform creates a `vm-flex-...` host in Region B. It does not allocate
-secondary pod IPs. Cilium assigns worker pod addresses from the Cilium pool after
-the node joins.
+The second command prints a `vm-flex-...` name. The VM does not have secondary
+pod IPs. Cilium assigns worker pod addresses from the Cilium pool after the node
+joins.
 
 ## Step 3: Generate the Flex join configuration
 
@@ -178,7 +173,15 @@ PASS Flex pod HTTPS egress reaches console.azure.anyscale.com
 PASS Upstream Cilium connectivity: AKS and Flex pods exchanged traffic and AKS reached Flex ClusterIP <service-ip>:8080
 ```
 
-## Results to keep
+If the command prints `FAIL` or `ERROR`, use
+the saved result that corresponds to the failed layer. Check
+`flex-host-runtime.json` for VM or join failures, `aks-network-profile.json` and
+`cilium-values-runtime.json` for Cilium configuration failures, and the DNS,
+egress, or route pod logs for the matching traffic failure. Rerun the same Module
+3 check after correcting the problem. Continue to Module 4 after every required
+check reports `PASS`.
+
+## Success evidence
 
 The networking command saves its detailed results under
 `.cache/lab-validation/m3-flex-network/`. Keep these files if you need to compare

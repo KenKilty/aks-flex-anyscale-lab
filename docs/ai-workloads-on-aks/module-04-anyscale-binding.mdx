@@ -40,13 +40,9 @@ opening an issue.
 
 ## Step 1: Confirm regional support
 
-The Anyscale operator AKS extension is **not available in all regions**. Before deploying,
-confirm your AKS cluster is in a supported region:
-
-Supported regions can change over time and may differ between subscriptions.
-Always verify extension availability for the AKS cluster you created.
-
-Use this command before enabling `TF_VAR_anyscale_enabled`:
+The Anyscale operator AKS extension is not available in every region or
+subscription. Run this command against the AKS cluster before enabling Anyscale.
+It asks Azure which Anyscale operator extension types the cluster can install:
 
 ```bash
 source .env
@@ -61,7 +57,7 @@ az k8s-extension extension-types list-by-cluster \
   -o json
 ```
 
-Expected output includes at least one extension type:
+Expected non-empty result:
 
 ```json
 [
@@ -71,21 +67,18 @@ Expected output includes at least one extension type:
 ]
 ```
 
-If the result is empty, that region/subscription combination does not currently
-support the Anyscale operator extension for AKS.
-
-:::caution Regional constraint
-The `anyscale.aks.operator` and `preview.anyscale.aks.operator` AKS extension types
-are **not available in all regions**. If you attempt to deploy in an unsupported
-region, you will see:
+:::caution If Azure returns an empty array
+An empty array means the current Region A and subscription combination does not
+support the operator extension. Do not enable Anyscale or continue with the
+current AKS cluster. Redeploy AKS in a region where the query returns
+`anyscale.aks.operator` or `preview.anyscale.aks.operator`. Attempting the
+deployment in an unsupported region produces an error like this:
 
 ```text
 ExtensionTypeRegistrationGetFailed: Extension type '<extension-type>'
 is not supported in region '<region>' for cluster type: ManagedClusters.
 ```
 
-**Solution**: Deploy your AKS cluster to a region where the availability command
-returns `anyscale.aks.operator` or `preview.anyscale.aks.operator` for your cluster.
 :::
 
 ## Step 2: Authenticate to Anyscale
@@ -117,40 +110,29 @@ List the clouds available to the authenticated account:
 The command should return at least one accessible cloud or an empty authenticated
 list. An authentication error means the browser login did not complete.
 
-## Step 3: Configure regions and enable Anyscale
+## Step 3: Enable Anyscale
 
-After the extension availability command returns an Anyscale operator type, enable
-Anyscale in `.env`. The availability result selects Region A for the AKS cluster;
-this setting then tells Terraform to create the Azure-native Anyscale resources
-for that existing cluster.
-
-**Example configuration** (adjust after checking extension availability):
+After the command in Step 1 returns an Anyscale operator type, change the existing
+Anyscale setting in `.env`:
 
 ```bash
-# In .env:
-TF_VAR_azure_location="<region-a-azure-name>" # Region A, where AKS runs
-TF_VAR_region_short="<region-a-short>"
-TF_VAR_flex_region="<region-b-azure-name>"    # Region B, where the Flex host runs
-TF_VAR_flex_region_short="<region-b-short>"
-TF_VAR_anyscale_enabled="true"                # Enable Anyscale operator
-TF_VAR_anyscale_platform_default_admin_assignment='{"enabled":true,"principal_type":"User","role_definition_name":"Anyscale Platform Administrator","scope":"subscription"}'
+TF_VAR_anyscale_enabled="true"
 ```
 
-**Rationale**: the home region must support `anyscale.aks.operator` or
-`preview.anyscale.aks.operator` for your subscription, while the Flex region must
-have quota for your selected Flex host VM size. Cross-region peering connects the
-AKS and Flex networks.
-The default Anyscale Platform administrator assignment gives the current Azure
-principal console-owner access for this preview lab.
+Keep the Region A and Region B values selected in Module 1. The environment
+template already enables the default Anyscale Platform administrator assignment
+for the signed-in Azure user, so you do not need to edit that setting for the
+self-guided lab.
+
+Region A must support `anyscale.aks.operator` or
+`preview.anyscale.aks.operator` for your subscription. Region B must have quota
+for the selected Flex VM, and the peering created in Module 2 connects the two
+networks.
 
 The operator and workloads use federated workload identity to access Azure
 services without a stored storage key or SAS token. This is separate from the
 Anyscale Platform administrator role that lets the deploying user use the
 preview control plane.
-
-If the availability query returned an empty result, redeploy AKS in a supported
-region before enabling Anyscale. The operator extension cannot install in the
-current region and subscription combination.
 
 ## Step 4: Deploy the Anyscale cloud and operator
 
@@ -171,7 +153,7 @@ Marketplace plan is part of this bound deployment, not a separate onboarding pat
 Terraform also prepares Gateway API ingress for Ray services and creates the
 Workload Identity federation and Kubernetes RBAC bindings the operator needs.
 
-Expected output:
+Example completion lines:
 
 ```text
 azapi_resource.anyscale_platform[0]: Creation complete
@@ -180,9 +162,10 @@ azurerm_kubernetes_cluster_extension.anyscale_operator: Creation complete
 Apply complete!
 ```
 
-Expected duration: **10-15 minutes** (extension reconciliation is slow on first install).
+Expected duration: **10-15 minutes** (the first operator installation can take
+several minutes).
 
-:::note Anyscale user access is required
+:::caution Anyscale user access is required
 The deployment assigns the signed-in Azure principal the built-in
 `Anyscale Platform Administrator Role` at subscription scope by default. This is separate
 from Kubernetes RBAC and from the workload identity data-plane roles used by jobs. Keep
@@ -191,6 +174,9 @@ administrator pre-creates an equivalent assignment for you.
 :::
 
 After the deployment finishes, confirm that the extension reports `Succeeded`:
+
+**Check the extension:** the result should show `Succeeded` and report the
+installed version.
 
 ```bash
 source .env
@@ -205,17 +191,20 @@ az k8s-extension show \
   --query '{name:name,provisioningState:provisioningState,currentVersion:currentVersion}' -o json
 ```
 
-Expected output:
+Expected fields:
 
 ```json
 {
   "name": "anyscale-operator",
   "provisioningState": "Succeeded",
-  "currentVersion": "1.7.1"
+  "currentVersion": "<installed-version>"
 }
 ```
 
 Verify the user-side Anyscale Platform RBAC assignment:
+
+**Check your access:** the result should show the signed-in Azure user with the
+Anyscale Platform Administrator role at subscription scope.
 
 ```bash
 PRINCIPAL_ID="$(az ad signed-in-user show --query id -o tsv)"
@@ -227,7 +216,7 @@ az role assignment list \
   -o table
 ```
 
-Expected output:
+Expected row:
 
 ```text
 Role                                  Scope
@@ -235,7 +224,11 @@ Role                                  Scope
 Anyscale Platform Administrator Role  /subscriptions/<your-subscription-id>
 ```
 
-Run the binding checks to confirm the extension, operator, and user role together:
+Run the Module 4 check to inspect the extension, operator, and user role together:
+
+**Check all required Anyscale resources:** all four lines should report `PASS`.
+If one fails, use its name to identify whether the extension, namespace,
+operator pod, or user role needs attention.
 
 ```bash
 ./scripts/validate-lab.sh m4
@@ -252,22 +245,25 @@ PASS M4-04 current principal has Anyscale Platform Administrator Role at subscri
 
 ## Step 5: Verify the Anyscale operator and Gateway
 
-The deployment creates `anyscale-operator/anyscale-gateway` after the bound
-operator extension is ready. Do not continue if the Gateway is missing or does
-not report `Programmed=True`; Anyscale needs it to expose Ray services.
+The deployment creates `anyscale-operator/anyscale-gateway` after the operator
+extension connects to the Anyscale cloud. The Gateway must report
+`Programmed=True` before Anyscale can expose Ray services.
+
+**Check the operator and Gateway:** inspect them together, then read the Gateway
+condition directly.
 
 ```bash
 kubectl get pods,gateway -n anyscale-operator -o wide
 ```
 
-Expected output:
+Example output:
 
 ```text
 NAME                                     READY   STATUS    RESTARTS   AGE   IP
-pod/anyscale-operator-556c4df7cb-tq4r7   3/3     Running   0          8m    10.40.0.25
+pod/anyscale-operator-<pod-suffix>        3/3     Running   0          <age> <pod-ip>
 
 NAME                                                CLASS              ADDRESS        PROGRAMMED   AGE
-gateway.gateway.networking.k8s.io/anyscale-gateway  istio  20.190.18.76  True         7m
+gateway.gateway.networking.k8s.io/anyscale-gateway  istio  <gateway-ip>  True          <age>
 ```
 
 Confirm the Gateway has been programmed:
@@ -278,13 +274,16 @@ kubectl get gateway anyscale-gateway \
   -o jsonpath='{.status.conditions}'
 ```
 
-Expected output:
+Expected condition:
 
 ```json
 [{"type":"Programmed","status":"True","reason":"Programmed"}]
 ```
 
 Confirm the cloud is visible in the console:
+
+**Check the cloud record:** the authenticated Anyscale account should find the
+Azure-backed cloud with the expected provider, compute stack, and region.
 
 ```bash
 source .env
@@ -295,11 +294,11 @@ ANYSCALE_HOST=https://console.azure.anyscale.com \
     'first(.[] | select((.name | split("/") | last) == $cloud)) | {id, name: (.name | split("/") | last), provider, compute_stack, region}'
 ```
 
-Expected output:
+Example output:
 
 ```json
 {
-  "id": "cld_xkt27g75ywyl7ghu77zj8w6wem",
+  "id": "<cloud-id>",
   "name": "flexany-dev-<region-a-short>",
   "provider": "AZURE",
   "compute_stack": "K8S",
@@ -321,20 +320,19 @@ Do not submit the workload until the Cilium, Flex networking, operator, and
 Gateway readiness checks pass. The CPU path then runs
 `./scripts/run-anyscale-workload.sh --mode cpu`.
 
-:::tip GPU configs
-Run the GPU workload after you confirm quota and capacity for the GPU VM size
-selected in `.env` and the readiness checks show `nvidia.com/gpu` allocatable on
-the Flex node.
-:::
+For the GPU path, continue only after you confirm quota and capacity for the GPU
+VM size selected in `.env` and the readiness checks show `nvidia.com/gpu`
+allocatable on the Flex node.
 
-## Results to keep
+## Success evidence
 
 You can move on when the `Anyscale.Platform` resource provider is registered, the
-Anyscale cloud is `ACTIVE`, the AKS extension reports `Succeeded`, the Gateway has
+Anyscale cloud is visible to the authenticated CLI with the expected Azure and
+Kubernetes fields, the AKS extension reports `Succeeded`, the Gateway has
 `Programmed=True`, and the placement table still sends workers to
-`agentpool=aksflexnodes`. Those checks show Azure, Kubernetes, and Anyscale are
-connected before any workload runs.
+`agentpool=aksflexnodes`. Together, these results show that Azure, Kubernetes,
+and Anyscale are connected before any workload runs.
 
 ## Next step
 
-Proceed to **[Module 5: Configure Autoscaling Profiles](/docs/ai-workloads-on-aks/module-05-autoscaling)**.
+Proceed to **[Module 5: Review Scaling and Readiness](/docs/ai-workloads-on-aks/module-05-autoscaling)**.

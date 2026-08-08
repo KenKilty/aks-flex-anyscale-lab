@@ -40,27 +40,10 @@ on Anyscale extension availability, then choose a reachable Region B with quota
 and capacity for the Flex host.
 
 :::caution Region A must support the Anyscale extension
-After Module 2 creates AKS, open Azure Cloud Shell and replace these values:
-
-```bash
-REGION_A="<aks-region>" REGION_B="<flex-region>"
-RG="<aks-resource-group>"
-CLUSTER="<aks-cluster-name>"
-
-az extension add --name k8s-extension --upgrade
-printf 'Checking Region A (%s); Flex runs in Region B (%s).\n' "$REGION_A" "$REGION_B"
-
-az k8s-extension extension-types list-by-cluster \
-  --resource-group "$RG" \
-  --cluster-name "$CLUSTER" \
-  --cluster-type managedClusters \
-  --query "[?name=='anyscale.aks.operator' || name=='preview.anyscale.aks.operator'].name" \
-  -o tsv
-```
-
-If the command returns an extension name, Region A is supported. No output means
-you must choose another Region A and redeploy AKS. Region B does not affect this
-check.
+Choose Region A with Anyscale operator availability in mind. After Module 2
+creates AKS, Module 4 checks whether that cluster can install the Anyscale
+operator extension. If Azure returns no supported extension type, redeploy AKS
+in a supported Region A. Region B does not affect this check.
 :::
 
 <Prerequisites />
@@ -105,18 +88,17 @@ Set `TF_VAR_azure_location` and `TF_VAR_region_short` to the actual Azure name
 and short label for Region A. Set `TF_VAR_flex_region` and
 `TF_VAR_flex_region_short` for Region B. Set the CPU or GPU VM sizes for the path
 available in your Azure environment, and keep
-`TF_VAR_cilium_pod_cidr="10.83.0.0/16"`. Leave
-`TF_VAR_flex_host_enabled="false"` until you are ready to provision and join the
-Flex host.
+`TF_VAR_cilium_pod_cidr="10.83.0.0/16"`. The Flex host is enabled by default
+because every lab path uses it.
 
 These values are the local environment profile used by every wrapper command:
 
 | Setting | What it controls | Where you use it next |
 | --- | --- | --- |
 | `TF_VAR_azure_location` and `TF_VAR_region_short` | Region A and the AKS resource names | Module 2 creates AKS; Module 4 checks Anyscale extension availability here. |
-| `TF_VAR_flex_region` and `TF_VAR_flex_region_short` | Region B and the Flex host resource names | Module 2 creates its VNet; Module 3 creates the host here. |
+| `TF_VAR_flex_region` and `TF_VAR_flex_region_short` | Region B and the Flex host resource names | Module 2 creates the VNet and Flex VM here; Module 3 joins the VM to AKS. |
 | `TF_VAR_system_vm_size` and `TF_VAR_cpu_vm_size` | The AKS system and CPU node pools | This step checks their Region A quota before Module 2 creates them. |
-| `TF_VAR_flex_host_vm_size` and `TF_VAR_flex_host_source_image_reference` | The CPU or GPU Flex VM and its host image | Module 3 creates this VM after you enable it. |
+| `TF_VAR_flex_host_vm_size` and `TF_VAR_flex_host_source_image_reference` | The CPU or GPU Flex VM and its host image | Module 2 creates this VM; Module 3 joins it to AKS. |
 | `TF_VAR_anyscale_enabled` | Whether Terraform creates the Anyscale cloud, extension, and Gateway | Keep it `"false"` until Module 4 confirms Region A support. |
 
 ## Step 4: Check local tools and Azure access
@@ -236,12 +218,11 @@ TF_VAR_azure_location="<region-a-azure-name>"
 TF_VAR_region_short="<region-a-short>"
 TF_VAR_flex_region="<region-b-azure-name>"
 TF_VAR_flex_region_short="<region-b-short>"
-TF_VAR_gpu_pool_configs='{}'
-TF_VAR_anyscale_enabled="false"
 ```
 
-Leave Anyscale disabled until you check extension availability against the
-deployed AKS cluster.
+The template already uses no AKS GPU pool and keeps Anyscale disabled until
+Module 4 checks extension availability against the deployed AKS cluster. You do
+not need to edit those settings for the CPU path.
 
 For the GPU path, keep the Region B values that passed the quota check and replace
 the corresponding host assignments in `.env` with the values supplied for your
@@ -253,23 +234,23 @@ TF_VAR_flex_host_source_image_reference='<gpu-ready-source-image-reference-json>
 ANYSCALE_FLEX_GPU_ENABLED="true"
 ANYSCALE_RESULTS_GPU_ACCELERATOR_TYPE="<anyscale-accelerator-type>"
 ANYSCALE_RESULTS_GPU_PRODUCT_LABEL="<kubernetes-gpu-product-label>"
-ANYSCALE_RESULTS_GPU_TARGET="flex"
-ANYSCALE_RESULTS_GPU_WORKER_COUNT="1"
 ```
 
 The GPU source image must already include NVIDIA drivers for the selected VM
 size. Use the exact image reference supplied for your Azure environment. Module
 5 verifies those drivers, then installs the Kubernetes NVIDIA device plugin that
-advertises the GPU to workloads.
+advertises the GPU to workloads. The template already targets the Flex node and
+starts one GPU worker. Increase the worker count only when the selected VM
+exposes enough GPUs.
 
-:::note Complete the environment first
+:::caution Complete the environment first
 Wait until the Flex node, Cilium, DNS, and the Anyscale Gateway all pass their
 readiness checks before running the Anyscale workload.
 :::
 
-## Results to keep
+## Success evidence
 
-Run the validation script to save a timestamped report:
+Run the environment check and save a timestamped report:
 
 ```bash
 ./scripts/anyscale-aks.sh doctor | tee .cache/env-check-$(date +%Y%m%d-%H%M%S).json
@@ -281,4 +262,4 @@ subscription or reports insufficient quota, compare it with these initial result
 
 ## Next step
 
-Proceed to **[Module 2: Deploy the AKS Foundation](/docs/ai-workloads-on-aks/module-02-aks-foundation)**.
+Proceed to **[Module 2: Build the AKS Foundation](/docs/ai-workloads-on-aks/module-02-aks-foundation)**.

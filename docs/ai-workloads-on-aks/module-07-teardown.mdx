@@ -43,7 +43,7 @@ export ANYSCALE_HOST="https://console.azure.anyscale.com"
 .venv/bin/anyscale job list --state RUNNING
 ```
 
-Expected output:
+Expected empty result:
 
 ```text
 JOBS:
@@ -55,10 +55,11 @@ No rows under the header means no Anyscale Job is running.
 Terminate any active jobs:
 
 ```bash
-.venv/bin/anyscale job terminate --name <job-name>
+JOB_NAME="<job-name>"
+.venv/bin/anyscale job terminate --name "$JOB_NAME"
 ```
 
-Expected output:
+Example output:
 
 ```text
 Job <job-name> termination requested.
@@ -78,7 +79,7 @@ retries the destroy once. You should not need to delete those residuals manually
 
 Expected duration: **10-20 minutes** (AKS cluster deletion is typically the longest step).
 
-Expected output:
+Example completion lines:
 
 ```text
 azurerm_kubernetes_cluster_extension.anyscale_operator: Destruction complete
@@ -92,17 +93,17 @@ Destroy complete!
 Azure occasionally returns transient control-plane errors such as `AnotherOperationInProgress`.
 Wait for the active Azure operation to finish or return an error, then rerun the
 same destroy command. It is safe to retry and will continue from where it stopped.
-Use the cleanup validation gate in Step 3 instead of manually deleting dependent
-resources.
+Use `./scripts/validate-lab.sh teardown` in Step 3 instead of manually deleting
+related resources.
 :::
 
-:::note Anyscale RP residuals
+**Anyscale RP residuals:**
+
 The Anyscale on Azure cloud is created through an ARM deployment. On teardown,
 Azure may delete the deployment record before the nested `Anyscale.Platform/clouds`
 and `cloudResources/default` resources disappear. The destroy command handles this by
 calling the Anyscale RP delete API for those residuals before retrying the final
 resource-group delete.
-:::
 
 :::info Stale Anyscale console entries
 The Azure Anyscale CLI does not support `anyscale cloud delete` for Azure clouds.
@@ -167,7 +168,7 @@ Expected output ends with:
 No changes. No objects need to be destroyed.
 ```
 
-## Results to keep
+## Success evidence
 
 Save the final cleanup results before discarding the environment:
 
@@ -210,7 +211,11 @@ resource groups are gone and Terraform has no resources in state.
 
 ## Create the environment again
 
-To replay from scratch with the same environment:
+The retained `.env` file contains the settings for a replay. The wrapper
+regenerates `terraform.auto.tfvars.json` from those settings, and Step 3 already
+showed that Terraform state contains no managed resources. You can therefore
+remove the generated input and empty cached state files before recreating the
+same environment:
 
 ```bash
 # Clear the generated tfvars and any cached state
@@ -221,10 +226,10 @@ rm -f infra/terraform/terraform.tfstate*
 ./scripts/anyscale-aks.sh apply
 ```
 
-Expected output:
+Example output:
 
 ```text
-Plan: 62 to add, 0 to change, 0 to destroy.
+Plan: <resource-count> to add, 0 to change, 0 to destroy.
 ```
 
 The `.env` file is unchanged, so all variable values carry over. Re-applying is

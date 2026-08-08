@@ -4,10 +4,18 @@ GPU capacity often sits outside the exact region, cluster, or datacenter where a
 
 ![Home region AKS cluster with Flex expansion](docs/ai-workloads-on-aks/assets/aks-flex-anyscale-multi-region/01-home-region-flex-expansion.svg)
 
-## Run the lab locally
+## Start the lab
 
-Use the Docusaurus site to follow the lab. From the repository root, install the
-documentation dependencies once, then start the local site:
+Open [Run AI Where Your GPUs Are](docs/ai-workloads-on-aks/aks-flex-anyscale-multi-region.mdx),
+then follow Modules 1 through 7 in order. Module 1 lists the Azure permissions,
+local tools, regional quota, and CPU or GPU settings to check before the first
+deployment in Module 2.
+
+## Run the documentation locally
+
+The documentation site requires Node.js 22 or later and npm. From the repository
+root, install the locked dependencies, then start Docusaurus with the repository
+helper:
 
 ```bash
 npm ci
@@ -20,7 +28,10 @@ does not create Azure or Anyscale resources until you run the commands inside th
 modules. The script restarts the docs server on port 3000 and clears the Docusaurus
 cache before serving the site.
 
-After you sign in with `az login`, prepare the local deployment files and tools:
+## Prepare a deployment
+
+After you sign in with `az login`, bootstrap the local deployment files and run
+the read-only environment checks:
 
 ```bash
 ./scripts/anyscale-aks.sh bootstrap
@@ -29,7 +40,8 @@ After you sign in with `az login`, prepare the local deployment files and tools:
 
 Bootstrap copies `.env-template` to the ignored `.env` file, records the active
 Azure subscription and tenant, creates the configured SSH key when needed, and
-installs the Anyscale CLI in `.venv`.
+installs the Anyscale CLI in `.venv`. Review the generated `.env` values in
+Module 1 before you create Azure resources.
 
 ## What you will learn
 
@@ -47,7 +59,7 @@ host. In either path, you will inspect Kubernetes placement data to confirm that
 Storage with workload identity, then remove the environment and confirm that
 Terraform state is empty.
 
-## Reference Topology
+## Reference topology
 
 These values are the validated reference shape, not hard-coded requirements. Copy
 `.env-template` to `.env`, then change the region and VM-size `TF_VAR_*` values to
@@ -78,25 +90,14 @@ Azure resources are gone.
 | Module | Outcome |
 | --- | --- |
 | [1: Prepare Your Environment](docs/ai-workloads-on-aks/module-01-environment-setup.mdx) | Sign in, check tools and quota, and choose the CPU or GPU path |
-| [2: Build the AKS Foundation](docs/ai-workloads-on-aks/module-02-aks-foundation.mdx) | Create AKS, storage, a container registry, identity, observability, and networking |
-| [3: Connect a Flex Node](docs/ai-workloads-on-aks/module-03-flex-node.mdx) | Create the Flex host, join it to AKS, and verify pod connectivity |
+| [2: Build the AKS Foundation](docs/ai-workloads-on-aks/module-02-aks-foundation.mdx) | Create AKS, the Flex VM, storage, a container registry, identity, observability, and networking |
+| [3: Connect a Flex Node](docs/ai-workloads-on-aks/module-03-flex-node.mdx) | Join the provisioned Flex VM to AKS and verify pod connectivity |
 | [4: Connect Anyscale](docs/ai-workloads-on-aks/module-04-anyscale-binding.mdx) | Create the Anyscale cloud, assign user access, install the AKS extension, and verify the Gateway |
 | [5: Review Scaling and Readiness](docs/ai-workloads-on-aks/module-05-autoscaling.mdx) | Confirm autoscaling, Flex networking, DNS, Gateway, and GPU availability when selected |
 | [6: Run the Workload](docs/ai-workloads-on-aks/module-06-workload-results.mdx) | Submit the Anyscale Job, inspect its results, and confirm pod placement |
 | [7: Remove the Environment](docs/ai-workloads-on-aks/module-07-teardown.mdx) | Stop active jobs, delete Azure resources, and confirm cleanup |
 
-## Start Here
-
-Open [Run AI Where Your GPUs Are](docs/ai-workloads-on-aks/aks-flex-anyscale-multi-region.mdx),
-then follow the modules in order. Each module explains what you will create, why
-it matters, which command to run, and what you should see before continuing.
-
-Use `.env-template` as the source for your local `.env`. Choose the CPU or GPU
-path supported by your Azure environment. The GPU path requires quota for the
-selected VM size, a compatible Flex host image, the NVIDIA device plugin, and
-the matching product label on the Flex node.
-
-## Results to keep
+## Success evidence
 
 After Module 6, keep the files under `.cache/anyscale/results/`. The two files that
 matter most are `workload-summary.json` and the Kubernetes placement JSON. The
@@ -125,3 +126,28 @@ Finish with:
 ```
 
 The current lab is clean only when the resource group is deleted and `terraform -chdir=infra/terraform state list` returns no resources. Stale Azure Anyscale control-plane entries without backing Azure ARM resources cannot be removed by `anyscale cloud delete`; they require provider-side cleanup.
+
+## Develop and contribute
+
+[Contributing to This Lab](CONTRIBUTING.md) describes the workshop scope and
+submission expectations. The [Developer Guide](docs/DEVELOPER.md) covers the
+repository structure, authoring conventions, validation commands, live E2E
+workflow, and pull request checklist.
+
+Before you propose a change, run:
+
+```bash
+scripts/lint.sh
+npm run build
+```
+
+## Related documentation
+
+- [Azure Kubernetes Service documentation](https://learn.microsoft.com/azure/aks/)
+- [Kubernetes documentation](https://kubernetes.io/docs/)
+- [Ray documentation](https://docs.ray.io/en/latest/)
+- [Anyscale documentation](https://docs.anyscale.com/)
+
+## License
+
+This project is licensed under the MIT License. See [LICENSE.md](LICENSE.md).
