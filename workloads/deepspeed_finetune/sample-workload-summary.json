@@ -1,0 +1,53 @@
+{
+  "run_id": "results-smoke-0001",
+  "experiment_name": "aks-flexany-results-smoke",
+  "profile": "smoke",
+  "smoke_mode": true,
+  "local_smoke": false,
+  "synthetic_model": true,
+  "timestamp_unix": 1751486400,
+  "placement": {
+    "expected_regions": ["westus2", "westus3"],
+    "placement_hint_env": "AKS_NODE_REGION",
+    "observed_region_hint": "westus3",
+    "observed_node_hint": "vm-flex-flexany-dev-wus3",
+    "observed_world_size": 1
+  },
+  "worker_snapshot": {
+    "run_id": "results-smoke-0001",
+    "experiment_name": "aks-flexany-results-smoke",
+    "rank": 0,
+    "world_size": 1,
+    "hostname": "vm-flex-flexany-dev-wus3",
+    "cuda_available": false,
+    "device_name": "cpu",
+    "region_hint": "westus3",
+    "node_hint": "vm-flex-flexany-dev-wus3"
+  },
+  "runtime_versions": {
+    "python": "3.11.9",
+    "ray": "2.54.1",
+    "cloudpickle": "3.1.1",
+    "adlfs": "2023.8.0",
+    "fsspec": "2023.12.1",
+    "deepspeed": "0.19.3",
+    "torch": "2.13.0",
+    "transformers": "5.14.1"
+  },
+  "metrics": {
+    "epoch": 0,
+    "loss": 1.2345,
+    "num_batches": 4,
+    "steps_per_worker": 4,
+    "world_size": 1
+  },
+  "storage_result": {
+    "account_name": "stflexanydevwus2",
+    "abfss_uri": "abfss://flexany-dev-blob@stflexanydevwus2.dfs.core.windows.net/anyscale/results/results-smoke-0001/workload-summary.json",
+    "container_name": "flexany-dev-blob",
+    "client_id_present": true,
+    "path": "flexany-dev-blob/anyscale/results/results-smoke-0001/workload-summary.json",
+    "uri": "az://flexany-dev-blob/anyscale/results/results-smoke-0001/workload-summary.json"
+  },
+  "status": "draft"
+}

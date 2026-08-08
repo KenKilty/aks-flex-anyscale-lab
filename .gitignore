@@ -1,0 +1,40 @@
+# Local environment files
+.env*
+!.env-template
+
+# Build outputs and generated artifacts
+.cache/
+.artifacts/
+.docusaurus/
+build/
+node_modules/
+
+# Language and tool caches
+.ruff_cache/
+.tscache/
+.mypy_cache/
+__pycache__/
+*.py[cod]
+
+# Terraform local state and plans
+.terraform/
+*.tfstate
+*.tfstate.*
+terraform.auto.tfvars.json
+tfplan*
+.terraform.lock.hcl
+
+# Local VS Code state
+.vscode/
+
+# Local GitHub Copilot skills and hooks
+.github/
+.githooks/
+
+# Local agent and test notes
+.github/agents/
+.github/browser-led-student-lab-findings.md
+docs/e2e-testing-guide.md
+LABTEST.md
+plan.md
+ISSUE_*.md

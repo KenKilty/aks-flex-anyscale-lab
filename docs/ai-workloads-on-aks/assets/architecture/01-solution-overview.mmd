@@ -1,0 +1,13 @@
+flowchart LR
+  regionA["Region A<br/>AKS cluster<br/>Ray head pod"]
+  network["Peered Azure networks<br/>Cilium carries pod traffic"]
+  regionB["Region B<br/>Flex node<br/>Ray worker pod"]
+
+  regionA <--> network <--> regionB
+
+  classDef home fill:#e0f2fe,stroke:#0369a1,color:#082f49,font-size:20px
+  classDef link fill:#fef3c7,stroke:#b45309,color:#451a03,font-size:20px
+  classDef flex fill:#dcfce7,stroke:#15803d,color:#052e16,font-size:20px
+  class regionA home
+  class network link
+  class regionB flex

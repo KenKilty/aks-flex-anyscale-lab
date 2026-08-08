@@ -1,0 +1,234 @@
+---
+title: "Module 7: Remove the Lab Environment"
+description: Stop active jobs, delete the Azure resources you created, and confirm that the environment is empty.
+sidebar_position: 8
+sidebar_label: "Module 7: Remove the Environment"
+tags:
+  - aks
+  - terraform
+  - teardown
+  - idempotency
+---
+
+You will remove the environment in dependency order: stop active workloads,
+unjoin the Flex host, remove Kubernetes resources, and delete the Azure
+resources. The final checks confirm that both Azure resource groups and
+Terraform state are empty.
+
+## What You Will Do
+
+One command performs the cleanup, but the order still matters. You will stop
+active jobs first, remove the deployed resources, and check the result. The same
+`.env` file can be used later to create a new environment.
+
+## Teardown order
+
+Destroying resources out of order causes Azure API conflicts (for example, deleting
+the VNet before the Flex host is unjoined, or destroying the AKS cluster before the
+Anyscale cloud is de-registered). The correct order is:
+
+1. Drain and stop active Anyscale jobs
+2. Delete the current lab's Anyscale on Azure cloud resource before extension and AKS cluster teardown
+3. Remove Flex host RBAC and unjoin the host
+4. Destroy Terraform-managed infrastructure (extension → cluster → networking → storage)
+5. Confirm that both resource groups and Terraform state are empty
+
+## Step 1: Stop active Anyscale jobs
+
+Check that no jobs are running before teardown:
+
+```bash
+source .env
+export ANYSCALE_HOST="https://console.azure.anyscale.com"
+.venv/bin/anyscale job list --state RUNNING
+```
+
+Expected output:
+
+```text
+JOBS:
+NAME    ID    PROJECT NAME    CLUSTER NAME    CURRENT STATE    CREATOR    ENTRYPOINT
+```
+
+No rows under the header means no Anyscale Job is running.
+
+Terminate any active jobs:
+
+```bash
+.venv/bin/anyscale job terminate --name <job-name>
+```
+
+Expected output:
+
+```text
+Job <job-name> termination requested.
+```
+
+## Step 2: Delete the lab resources
+
+```bash
+./scripts/anyscale-aks.sh destroy
+```
+
+This runs `terraform destroy -auto-approve` with the same variable profile used
+to deploy. Terraform handles the ordering defined by `depends_on` blocks. If the
+final resource-group delete is blocked by residual Anyscale on Azure RP
+resources, the command removes the remaining `Anyscale.Platform/clouds` resources and
+retries the destroy once. You should not need to delete those residuals manually.
+
+Expected duration: **10-20 minutes** (AKS cluster deletion is typically the longest step).
+
+Expected output:
+
+```text
+azurerm_kubernetes_cluster_extension.anyscale_operator: Destruction complete
+azapi_resource.anyscale_platform[0]: Destruction complete
+azurerm_kubernetes_cluster.aks: Destruction complete
+azurerm_resource_group.this: Destruction complete
+Destroy complete!
+```
+
+:::warning Transient Azure errors during destroy
+Azure occasionally returns transient control-plane errors such as `AnotherOperationInProgress`.
+If the first destroy run fails, run it again. It is safe to retry and will continue
+from where it stopped.
+:::
+
+:::note Anyscale RP residuals
+The Anyscale on Azure cloud is created through an ARM deployment. On teardown,
+Azure may delete the deployment record before the nested `Anyscale.Platform/clouds`
+and `cloudResources/default` resources disappear. The destroy command handles this by
+calling the Anyscale RP delete API for those residuals before retrying the final
+resource-group delete.
+:::
+
+:::info Stale Anyscale console entries
+The Azure Anyscale CLI does not support `anyscale cloud delete` for Azure clouds.
+If the Azure resource group and `Anyscale.Platform/clouds` ARM resource are gone
+but the Anyscale console still lists an old cloud with no resources, treat it as a
+stale control-plane registration and ask your Anyscale/Azure provider contact to
+remove it. Do not keep retrying Terraform or Azure Portal deletes for a cloud that
+no longer exists in Azure ARM.
+:::
+
+## Step 3: Confirm Azure resources and Terraform state are empty
+
+After destroy completes:
+
+```bash
+# Confirm that Azure resources and Terraform state are empty
+./scripts/validate-lab.sh teardown
+```
+
+Expected output:
+
+```text
+PASS M7-01 resource group deleted
+PASS M7-02 AKS managed resource group deleted
+PASS M7-03 terraform state empty
+```
+
+If you want to inspect the underlying values directly, derive them from `.env`:
+
+```bash
+source .env
+RG="rg-${TF_VAR_project}-${TF_VAR_environment}-${TF_VAR_region_short}"
+CLUSTER="aks-${TF_VAR_project}-${TF_VAR_environment}-${TF_VAR_region_short}"
+AKS_MANAGED_RG="MC_${RG}_${CLUSTER}_${TF_VAR_azure_location}"
+az group exists -n "$RG"
+az group exists -n "$AKS_MANAGED_RG"
+terraform -chdir=infra/terraform state list
+```
+
+Expected output:
+
+```text
+false
+false
+```
+
+`terraform state list` should print no resources.
+
+## Step 4: Confirm teardown is repeatable
+
+Run destroy a second time to confirm it is a no-op:
+
+```bash
+./scripts/anyscale-aks.sh destroy
+```
+
+Expected output ends with:
+
+```text
+No changes. No objects need to be destroyed.
+```
+
+## Results to keep
+
+Save the final cleanup results before discarding the environment:
+
+```bash
+(
+set -euo pipefail
+mkdir -p .cache/teardown
+./scripts/validate-lab.sh teardown | tee .cache/teardown/checks.txt
+source .env
+RG="rg-${TF_VAR_project}-${TF_VAR_environment}-${TF_VAR_region_short}"
+CLUSTER="aks-${TF_VAR_project}-${TF_VAR_environment}-${TF_VAR_region_short}"
+AKS_MANAGED_RG="MC_${RG}_${CLUSTER}_${TF_VAR_azure_location}"
+az group exists -n "$RG" > .cache/teardown/rg-exists.txt
+az group exists -n "$AKS_MANAGED_RG" > .cache/teardown/aks-managed-rg-exists.txt
+if ! TF_STATE="$(terraform -chdir=infra/terraform state list)"; then
+  echo "FAIL: unable to read Terraform state" >&2
+  exit 1
+fi
+printf '%s\n' "${TF_STATE:-empty}" > .cache/teardown/tf-state.txt
+echo "teardown complete $(date -u +%Y-%m-%dT%H:%M:%SZ)" > .cache/teardown/summary.txt
+cat .cache/teardown/rg-exists.txt \
+  .cache/teardown/aks-managed-rg-exists.txt \
+  .cache/teardown/tf-state.txt
+)
+```
+
+Expected output:
+
+```text
+PASS M7-01 resource group deleted
+PASS M7-02 AKS managed resource group deleted
+PASS M7-03 terraform state empty
+false
+false
+empty
+```
+
+The `PASS` results and final three values confirm that the primary and AKS managed
+resource groups are gone and Terraform has no resources in state.
+
+## Create the environment again
+
+To replay from scratch with the same environment:
+
+```bash
+# Clear the generated tfvars and any cached state
+rm -f infra/terraform/terraform.auto.tfvars.json
+rm -f infra/terraform/terraform.tfstate*
+
+# Then start from Module 2
+./scripts/anyscale-aks.sh apply
+```
+
+Expected output:
+
+```text
+Plan: 62 to add, 0 to change, 0 to destroy.
+```
+
+The `.env` file is unchanged, so all variable values carry over. Re-applying is
+safe and idempotent. Terraform will create only the resources that do not exist.
+
+## Congratulations
+
+You created a public AKS cluster in Region A, connected a Flex node from Region B,
+connected Anyscale on Azure, and ran a distributed workload across both locations.
+The placement data showed the worker running on the Flex node, and the cleanup
+checks confirmed that the Azure resources and Terraform state were removed.

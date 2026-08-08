@@ -1,0 +1,62 @@
+:root {
+  --ifm-color-primary: #0078d4;
+  --ifm-color-primary-dark: #006cbe;
+  --ifm-color-primary-darker: #0065b3;
+  --ifm-color-primary-darkest: #005391;
+  --ifm-color-primary-light: #1484da;
+  --ifm-color-primary-lighter: #218bdd;
+  --ifm-color-primary-lightest: #439ee3;
+}
+
+.markdown img {
+  border: 1px solid #d0d7de;
+  border-radius: 8px;
+}
+
+.network-explainer {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(230px, 1fr);
+  gap: 1.5rem;
+  align-items: center;
+  margin: 1.5rem 0;
+}
+
+.network-diagram {
+  min-width: 0;
+}
+
+.translation-bubble {
+  position: relative;
+  border: 2px solid #0078d4;
+  border-radius: 18px;
+  padding: 1rem 1.1rem;
+  background: #f0f8ff;
+  color: #172b3a;
+  box-shadow: 4px 4px 0 #b8dcf4;
+}
+
+.translation-bubble::before {
+  position: absolute;
+  top: 42%;
+  left: -18px;
+  width: 30px;
+  height: 30px;
+  border-bottom: 2px solid #0078d4;
+  border-left: 2px solid #0078d4;
+  background: #f0f8ff;
+  content: "";
+  transform: rotate(45deg);
+}
+
+.translation-bubble strong,
+.translation-bubble p {
+  position: relative;
+}
+
+.translation-bubble p {
+  margin: 0.55rem 0;
+}
+
+.translation-bubble p:last-child {
+  margin-bottom: 0;
+}

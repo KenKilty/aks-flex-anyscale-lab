@@ -1,0 +1,11 @@
+flowchart LR
+  aks["1. Region A<br/>AKS node and Ray head pod<br/>Cilium wraps cross-node traffic"]
+  network["2. Azure network<br/>Peered VNets carry VXLAN<br/>between node private IPs"]
+  flex["3. Region B<br/>Flex node and Ray worker pod<br/>Cilium unwraps the packet"]
+
+  aks --> network --> flex
+
+  classDef endpoint fill:#dcfce7,stroke:#15803d,color:#052e16,font-size:18px
+  classDef network fill:#fef3c7,stroke:#b45309,color:#451a03,font-size:18px
+  class aks,flex endpoint
+  class network network
