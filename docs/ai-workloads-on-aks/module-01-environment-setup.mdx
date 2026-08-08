@@ -98,7 +98,7 @@ next: ./scripts/anyscale-aks.sh doctor
 Keep `.env` for the full lab. It is ignored by Git and drives every deployment,
 workload, and teardown command.
 
-## Step 3: Review your Azure deployment settings
+## Step 3: Verify your Azure region and VM-size settings in `.env`
 
 Open `.env` and verify that the four Azure ID values match `az account show`.
 Set `TF_VAR_azure_location` and `TF_VAR_region_short` to the actual Azure name
@@ -108,6 +108,16 @@ available in your Azure environment, and keep
 `TF_VAR_cilium_pod_cidr="10.83.0.0/16"`. Leave
 `TF_VAR_flex_host_enabled="false"` until you are ready to provision and join the
 Flex host.
+
+These values are the local environment profile used by every wrapper command:
+
+| Setting | What it controls | Where you use it next |
+| --- | --- | --- |
+| `TF_VAR_azure_location` and `TF_VAR_region_short` | Region A and the AKS resource names | Module 2 creates AKS; Module 4 checks Anyscale extension availability here. |
+| `TF_VAR_flex_region` and `TF_VAR_flex_region_short` | Region B and the Flex host resource names | Module 2 creates its VNet; Module 3 creates the host here. |
+| `TF_VAR_system_vm_size` and `TF_VAR_cpu_vm_size` | The AKS system and CPU node pools | This step checks their Region A quota before Module 2 creates them. |
+| `TF_VAR_flex_host_vm_size` and `TF_VAR_flex_host_source_image_reference` | The CPU or GPU Flex VM and its host image | Module 3 creates this VM after you enable it. |
+| `TF_VAR_anyscale_enabled` | Whether Terraform creates the Anyscale cloud, extension, and Gateway | Keep it `"false"` until Module 4 confirms Region A support. |
 
 ## Step 4: Check local tools and Azure access
 
@@ -178,7 +188,10 @@ CurrentValue    Limit    Unit    LocalName
 ```
 
 Subtract `CurrentValue` from `Limit` and confirm the remaining quota can create
-the selected VM sizes. The values differ by subscription and region.
+the selected nodes. Use the minimum and maximum node counts in `.env` for the
+AKS system and CPU pools, and reserve one Flex host in Region B. If the system
+and CPU VM sizes use the same quota family, include the maximum capacity of both
+pools in that calculation. The values differ by subscription and region.
 
 ### GPU path
 
@@ -206,6 +219,14 @@ before continuing. GPU quota can be requested later if you want to extend the la
 | Region A | Value of `TF_VAR_azure_location` | Same Region A; must support the Anyscale AKS extension |
 | Region B | Value of `TF_VAR_flex_region` | Same role, with quota and capacity for the selected GPU VM size |
 | Workload | CPU-only Ray worker on Flex | `GPU:1` Ray worker on the GPU Flex host |
+
+:::caution Choose the host profile before creating it
+The selected path determines the Flex VM size and source image. Changing a live
+CPU Flex host to a GPU VM or GPU-ready image makes Terraform replace that host.
+Use a new environment when you want to switch paths without replacing an
+existing host. The CPU path is the lower-cost first run; use the GPU path only
+after the Region B quota check succeeds.
+:::
 
 For the CPU path, open `.env` and confirm these existing values. Replace them if
 you changed regions while checking quota:
@@ -235,6 +256,11 @@ ANYSCALE_RESULTS_GPU_PRODUCT_LABEL="<kubernetes-gpu-product-label>"
 ANYSCALE_RESULTS_GPU_TARGET="flex"
 ANYSCALE_RESULTS_GPU_WORKER_COUNT="1"
 ```
+
+The GPU source image must already include NVIDIA drivers for the selected VM
+size. Use the exact image reference supplied for your Azure environment. Module
+5 verifies those drivers, then installs the Kubernetes NVIDIA device plugin that
+advertises the GPU to workloads.
 
 :::note Complete the environment first
 Wait until the Flex node, Cilium, DNS, and the Anyscale Gateway all pass their

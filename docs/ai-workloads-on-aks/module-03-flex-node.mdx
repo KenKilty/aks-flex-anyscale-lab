@@ -113,8 +113,10 @@ TF_VAR_flex_host_enabled="true"
 ```
 
 For the CPU path, the image line must include `Canonical`, `ubuntu-24_04-lts`,
-and `server`. For the GPU path, use the NVIDIA-ready image reference you saved in
-`.env` during environment setup.
+and `server`. For the GPU path, use the image reference you configured in `.env`
+during environment setup. A GPU-ready image includes the NVIDIA drivers for the
+selected VM; Module 5 installs the Kubernetes device plugin that advertises that
+GPU to workloads.
 
 Then create the VM and its peered network attachment:
 

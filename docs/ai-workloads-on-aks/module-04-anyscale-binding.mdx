@@ -120,7 +120,9 @@ list. An authentication error means the browser login did not complete.
 ## Step 3: Configure regions and enable Anyscale
 
 After the extension availability command returns an Anyscale operator type, enable
-Anyscale in `.env`.
+Anyscale in `.env`. The availability result selects Region A for the AKS cluster;
+this setting then tells Terraform to create the Azure-native Anyscale resources
+for that existing cluster.
 
 **Example configuration** (adjust after checking extension availability):
 
@@ -140,6 +142,11 @@ have quota for your selected Flex host VM size. Cross-region peering connects th
 AKS and Flex networks.
 The default Anyscale Platform administrator assignment gives the current Azure
 principal console-owner access for this preview lab.
+
+The operator and workloads use federated workload identity to access Azure
+services without a stored storage key or SAS token. This is separate from the
+Anyscale Platform administrator role that lets the deploying user use the
+preview control plane.
 
 If the availability query returned an empty result, redeploy AKS in a supported
 region before enabling Anyscale. The operator extension cannot install in the

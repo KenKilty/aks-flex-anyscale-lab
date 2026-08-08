@@ -90,8 +90,10 @@ Destroy complete!
 
 :::warning Transient Azure errors during destroy
 Azure occasionally returns transient control-plane errors such as `AnotherOperationInProgress`.
-If the first destroy run fails, run it again. It is safe to retry and will continue
-from where it stopped.
+Wait for the active Azure operation to finish or return an error, then rerun the
+same destroy command. It is safe to retry and will continue from where it stopped.
+Use the cleanup validation gate in Step 3 instead of manually deleting dependent
+resources.
 :::
 
 :::note Anyscale RP residuals
@@ -129,6 +131,8 @@ PASS M7-03 terraform state empty
 ```
 
 If you want to inspect the underlying values directly, derive them from `.env`:
+an empty `terraform state list` is a success condition, so it prints no resource
+lines after the two `false` values.
 
 ```bash
 source .env

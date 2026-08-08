@@ -33,6 +33,12 @@ Your environment has two distinct compute locations:
 The Flex host does **not** autoscale. It is pre-provisioned and permanently
 joined. Anyscale can place workers on it immediately without waiting for a scale event.
 
+:::warning Flex capacity remains allocated
+The AKS CPU pool can scale within its configured bounds. The Flex VM stays
+allocated until you remove the environment in Module 7, even when no worker pod
+is running.
+:::
+
 ## Step 1: Review the AKS CPU pool
 
 ```bash
@@ -75,7 +81,7 @@ Terraform keeps one CPU node ready and can scale the pool to four nodes. The
 `Standard_D16s_v5` node provides the resources required by the Ray head. Your
 quota check reserved 20 DSv5 cores for this CPU node plus the system node.
 
-### GPU path
+### GPU driver and device plugin
 
 Choose the GPU path before provisioning the Flex host. If you are continuing
 from a CPU-only host, changing the Flex VM size or image will replace that host.
@@ -111,9 +117,12 @@ Apply complete! Resources: 0 added, 0 changed, 0 destroyed.
 
 ## Step 4: Check that the workload path is ready
 
-If you enabled the GPU path, first confirm the Flex host driver and then install
-the NVIDIA device plugin before running the readiness checks. The installation
-script targets the Flex node and adds the required taint tolerations.
+### GPU path
+
+Skip this subsection for the CPU path. If you enabled the GPU path, first confirm
+the Flex host driver and then install the NVIDIA device plugin before running the
+shared readiness checks. The installation script targets the Flex node and adds
+the required taint tolerations.
 
 ```bash
 ssh -i "$SSH_PRIVATE_KEY_PATH" \
@@ -142,6 +151,8 @@ daemonset.apps/nvidia-device-plugin-daemonset configured
 daemon set "nvidia-device-plugin-daemonset" successfully rolled out
 NVIDIA device plugin ready: 1 allocatable GPU(s) in pool aksflexnodes
 ```
+
+### CPU and GPU paths
 
 Run the readiness checks for the CPU scale profile, selected GPU settings, Cilium,
 the Flex node, DNS, HTTPS access, traffic between AKS and Flex pods, and the

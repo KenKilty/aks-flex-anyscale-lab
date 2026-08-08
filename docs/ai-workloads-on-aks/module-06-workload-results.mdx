@@ -124,7 +124,9 @@ Run the workload logic without a cluster:
 
 On the first run, the wrapper creates a temporary Python environment and installs
 the local Torch, DeepSpeed, Ray, and Transformers dependencies. That install can
-take several minutes. The wrapper prints each phase before the workload starts.
+take 5-15 minutes, depending on your network and workstation. The wrapper prints
+each phase before the workload starts, so active phase output is normal progress
+rather than a stalled run.
 
 This runs `train.py --profile smoke --cpu-only --local-smoke` locally and
 produces a workload summary at
@@ -192,8 +194,9 @@ info: submit attempt 1/3 for flex-results-gpu-20260709-110159
 (anyscale +6m44.7s) Job 'flex-results-gpu-20260709-110159' transitioned from STARTING to RUNNING
 ```
 
-The first GPU run can spend several minutes pulling the CUDA Ray image, so the
-submission command allows more startup time for GPU workers than CPU workers.
+The first GPU run can spend much of the 15-minute worker startup allowance
+pulling the CUDA Ray image. `STARTING` followed by `RUNNING` is normal progress;
+use the job logs and placement checks in the next step if it does not advance.
 The default GPU run starts one `GPU:1` worker. Increase
 `ANYSCALE_RESULTS_GPU_WORKER_COUNT` only when the selected Flex host exposes
 enough GPUs for additional workers. If the GPU worker pod stays Pending because
@@ -328,6 +331,11 @@ source .env
 echo "home=${TF_VAR_azure_location} flex=${TF_VAR_flex_region}"
 ```
 
+Pass means the Ray head ran on Region A AKS capacity, the Ray worker ran on
+`agentpool=aksflexnodes` in Region B, and the collected placement JSON records
+that worker after Kubernetes removes completed pods. Use that JSON as the
+authoritative placement evidence after cleanup.
+
 Verify the worker ran on Flex by checking worker log lines for the Ray worker IP,
 then confirm Kubernetes placed that worker pod on the Flex node. The
 worker pod IP comes from the Cilium cluster pool (for example `10.83.0.0/16`), and
@@ -360,6 +368,8 @@ region and that Kubernetes placed a worker pod on `agentpool=aksflexnodes`. The
 GPU path also requires `nvidia.com/gpu` allocation. A home-region value by itself
 is not enough to confirm placement.
 
+## Troubleshooting
+
 ### Worker health-check or cloudpickle failure
 
 If Anyscale reports `A worker health check failed` from
@@ -389,12 +399,13 @@ termination reason. A pod restart, eviction, or node loss points to worker healt
 a stable pod with a repeatable serialization traceback points to the Ray runtime
 or an object returned through the training status path.
 
-## Step 8: Review the workload in the Anyscale console
+## Step 8: Inspect the workload in the Anyscale console
 
-The command-line results confirm placement. The Anyscale Console shows the same
-run from the service side: job state, cluster shape, application logs, and live
-metrics. Capture these screens while the job is still `Running` when you can,
-especially for the GPU path where the metrics panels show GPU use.
+The command-line summary and placement JSON are the authoritative placement
+evidence. The Anyscale Console supplements them with the control-plane view of
+the same run: job state, cluster shape, application logs, and live metrics.
+Capture these screens while the job is still `Running` when you can, especially
+for the GPU path where the metrics panels show GPU use.
 
 1. Open `https://console.azure.anyscale.com`.
 2. Select the cloud you created. Its name matches the Anyscale Platform cloud in

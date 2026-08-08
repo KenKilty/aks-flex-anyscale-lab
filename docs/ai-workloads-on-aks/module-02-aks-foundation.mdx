@@ -98,6 +98,9 @@ and the summary must show `0 to change, 0 to destroy`.
 ```
 
 Expected duration: **15-25 minutes** (AKS cluster creation is the longest step).
+Terraform prints resource progress while Azure creates the cluster. Wait for the
+apply to finish, then use the node, Cilium, and VNet peering checks below as the
+evidence that the foundation is ready.
 
 When complete, Terraform prints the AKS and network details you will use in the
 next module:
@@ -222,6 +225,8 @@ flex-to-aks  <resource-group>       Connected       Succeeded
 ```
 
 Both `aks-to-flex` and `flex-to-aks` peerings should show `Succeeded`.
+Terraform creates both directions. Seeing both rows in `Succeeded` confirms the
+bidirectional VNet path is ready before the Flex VM exists.
 
 ## Results to keep
 
