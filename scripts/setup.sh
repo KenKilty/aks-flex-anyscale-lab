@@ -482,6 +482,24 @@ cleanup_anyscale_platform_resources() {
   for api in 2026-02-01-preview 2023-04-01-preview; do
     az rest --method delete --url "https://management.azure.com${child}?api-version=${api}" --only-show-errors >/dev/null 2>&1 || true
   done
+
+  for ((attempt = 1; attempt <= 60; attempt++)); do
+    if ! group_exists="$(az group exists --name "${rg}" --only-show-errors 2>/dev/null)"; then
+      printf 'warning: unable to check resource group deletion on attempt %s/60\n' "${attempt}" >&2
+    elif [[ "${group_exists}" == "false" ]]; then
+      printf 'info: Anyscale.Platform resources are absent\n' >&2
+      return 0
+    elif show_output="$(az rest --method get --url "https://management.azure.com${child}?api-version=2026-02-01-preview" --only-show-errors 2>&1)"; then
+      :
+    elif grep -Eq 'ResourceNotFound|ParentResourceNotFound|ResourceGroupNotFound|could not be found' <<<"${show_output}"; then
+      break
+    else
+      printf 'warning: unable to check Anyscale.Platform cloud resource deletion on attempt %s/60: %s\n' "${attempt}" "${show_output}" >&2
+    fi
+    ((attempt < 60)) && sleep 5
+  done
+  ((attempt <= 60)) || die "Anyscale.Platform cloud resource did not delete within 5 minutes"
+
   for api in 2026-02-01-preview 2023-04-01-preview; do
     az rest --method delete --url "https://management.azure.com${parent}?api-version=${api}" --only-show-errors >/dev/null 2>&1 || true
   done
