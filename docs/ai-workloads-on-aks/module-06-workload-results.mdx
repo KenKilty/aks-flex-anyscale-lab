@@ -199,9 +199,11 @@ The default GPU run starts one `GPU:1` worker. Increase
 `ANYSCALE_RESULTS_GPU_WORKER_COUNT` only when the selected Flex host exposes
 enough GPUs for additional workers. If the GPU worker pod stays Pending because
 its `nvidia.com/gpu.product` selector does not match the Flex node, correct
-`ANYSCALE_RESULTS_GPU_PRODUCT_LABEL` and rerun
-`./scripts/install-nvidia-device-plugin.sh`. The script applies that product
-label after confirming `nvidia.com/gpu` is allocatable.
+`ANYSCALE_RESULTS_GPU_PRODUCT_LABEL` in `.env`, rerun
+`./scripts/install-nvidia-device-plugin.sh`, and then rerun
+`./scripts/run-anyscale-workload.sh --mode gpu` so the new compute config version
+uses the updated label. The installer applies that product label after
+confirming `nvidia.com/gpu` is allocatable on the Flex node.
 
 ## Step 5: Watch the job and pod placement
 

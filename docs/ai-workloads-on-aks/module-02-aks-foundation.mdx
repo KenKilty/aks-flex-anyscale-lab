@@ -36,7 +36,9 @@ Region A (AKS home region)             Region B (Flex host region)
 ```
 
 Terraform creates both sides of the VNet peering before it creates the Flex VM,
-so the host has a cross-region network path when you join it to AKS.
+so the host has a cross-region network path when you join it to AKS. It also
+checks the live AKS network profile and waits for Cilium to become ready before
+it starts the Flex VM.
 
 Terraform creates AKS with no built-in CNI, then installs upstream Cilium with
 cluster-pool IPAM, a VXLAN tunnel, and kube-proxy replacement. Cilium on the AKS

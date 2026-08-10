@@ -491,7 +491,7 @@ ensure_anyscale_gateway() {
   cluster="$(aks_cluster_name)"
   namespace="${TF_VAR_anyscale_operator_namespace}"
   gateway_name="${TF_VAR_anyscale_gateway_name:-anyscale-gateway}"
-  gateway_class="istio"
+  gateway_class="approuting-istio"
 
   az aks get-credentials --resource-group "${rg}" --name "${cluster}" --overwrite-existing --only-show-errors >/dev/null
   kubectl get gatewayclass "${gateway_class}" >/dev/null

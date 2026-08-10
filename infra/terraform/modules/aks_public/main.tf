@@ -226,6 +226,8 @@ resource "azurerm_monitor_data_collection_rule" "container_insights" {
   description         = "DCR for AKS Container Insights with ContainerLogV2 enabled."
   tags                = var.tags
 
+  depends_on = [azurerm_kubernetes_cluster.this]
+
   destinations {
     log_analytics {
       workspace_resource_id = var.log_analytics_workspace_id

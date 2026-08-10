@@ -143,13 +143,8 @@ cloud_accessible() {
   [[ -n "${CLOUD_REF}" ]]
 }
 
-resolve_gpu_accelerator_type() {
-  if [[ "${TF_VAR_gpu_pool_configs}" != "{}" ]]; then
-    jq -r 'to_entries[0].key // empty' <<<"${TF_VAR_gpu_pool_configs}"
-    return 0
-  fi
-
-  printf '%s\n' "${ANYSCALE_RESULTS_GPU_ACCELERATOR_TYPE:-${ANYSCALE_PROOF_GPU_ACCELERATOR_TYPE:-}}"
+resolve_gpu_product_label() {
+  printf '%s\n' "${ANYSCALE_RESULTS_GPU_PRODUCT_LABEL:-${ANYSCALE_PROOF_GPU_PRODUCT_LABEL:-}}"
 }
 
 check_flex_workload_path() {
@@ -273,9 +268,9 @@ collect_kubernetes_placement_results() {
 write_compute_config() {
   local config_name="$1"
   local worker_name="$2"
-  local worker_vm_size="$3"
-  local worker_count="$4"
+  local worker_count="$3"
   local worker_agentpool="${AKS_FLEX_AGENT_POOL_NAME}"
+  local worker_product_label=""
   local head_cpu="2"
   local head_memory_gi="8"
   local worker_cpu="2"
@@ -294,16 +289,18 @@ write_compute_config() {
   # Match private-sample strategy: resource-based config + agentpool selectors,
   # not cloud VM instance_type values. Workload workers run on the Flex node.
   if [[ "${worker_name}" == "gpu-worker" ]]; then
-    local gpu_accelerator_type
-    gpu_accelerator_type="$(resolve_gpu_accelerator_type)"
-    [[ -n "${gpu_accelerator_type}" ]] || die "unable to determine GPU accelerator type from TF_VAR_gpu_pool_configs"
+    local gpu_product_label
+    gpu_product_label="$(resolve_gpu_product_label)"
+    [[ -n "${gpu_product_label}" ]] || die "gpu mode requested but ANYSCALE_RESULTS_GPU_PRODUCT_LABEL is unset"
     worker_cpu="4"
     worker_memory_gi="16"
+    worker_product_label="
+          nvidia.com/gpu.product: ${gpu_product_label}"
     worker_gpu="
       GPU: 1"
     worker_required_labels="
     required_labels:
-      ray.io/accelerator-type: ${gpu_accelerator_type}"
+      ray.io/accelerator-type: ${gpu_product_label}"
     worker_tolerations="
         tolerations:
           - key: aks-flex-node
@@ -339,13 +336,13 @@ worker_nodes:
       CPU: ${worker_cpu}
       memory: ${worker_memory_gi}Gi
 ${worker_gpu}
-${worker_required_labels}
+    ${worker_required_labels}
     min_nodes: 0
     max_nodes: ${worker_count:-1}
     advanced_instance_config:
       spec:
         nodeSelector:
-          agentpool: ${worker_agentpool}
+          agentpool: ${worker_agentpool}${worker_product_label}
 ${worker_tolerations}
 EOF
 }
@@ -353,8 +350,7 @@ EOF
 ensure_compute_config() {
   local config_name="$1"
   local worker_name="$2"
-  local worker_vm_size="$3"
-  local worker_count="$4"
+  local worker_count="$3"
   local existing_json
   existing_json="${ARTIFACT_DIR}/compute-configs.json"
 
@@ -366,7 +362,7 @@ ensure_compute_config() {
     fi
   fi
 
-  write_compute_config "${config_name}" "${worker_name}" "${worker_vm_size}" "${worker_count}"
+  write_compute_config "${config_name}" "${worker_name}" "${worker_count}"
   .venv/bin/anyscale compute-config create \
     --name "${config_name}" \
     --config-file "${COMPUTE_CONFIG_DIR}/${config_name}.yaml" >/dev/null
@@ -590,20 +586,17 @@ submit_job_for_mode() {
 
 run_cpu_mode() {
   check_flex_workload_path
-  ensure_compute_config "${CPU_CONFIG_NAME}" "cpu-worker" "${TF_VAR_cpu_vm_size}" "1"
+  ensure_compute_config "${CPU_CONFIG_NAME}" "cpu-worker" "1"
   submit_job_for_mode "cpu" "${CPU_CONFIG_NAME}" "1" "--cpu-only" "${CPU_IMAGE_URI}"
 }
 
 run_gpu_mode() {
-  local gpu_accelerator_type
   local gpu_worker_count
 
-  gpu_accelerator_type="$(resolve_gpu_accelerator_type)"
-  [[ -n "${gpu_accelerator_type}" ]] || die "gpu mode requested but no accelerator type was found; set ANYSCALE_RESULTS_GPU_ACCELERATOR_TYPE or TF_VAR_gpu_pool_configs"
   gpu_worker_count="${ANYSCALE_RESULTS_GPU_WORKER_COUNT:-${ANYSCALE_PROOF_GPU_WORKER_COUNT:-1}}"
 
   check_flex_workload_path
-  ensure_compute_config "${GPU_CONFIG_NAME}" "gpu-worker" "${TF_VAR_flex_host_vm_size:-}" "${gpu_worker_count}"
+  ensure_compute_config "${GPU_CONFIG_NAME}" "gpu-worker" "${gpu_worker_count}"
   submit_job_for_mode "gpu" "${GPU_CONFIG_NAME}" "${gpu_worker_count}" "" "${GPU_IMAGE_URI}"
 }
 

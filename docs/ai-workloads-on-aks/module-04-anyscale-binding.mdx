@@ -150,8 +150,10 @@ This creates the Anyscale on Azure cloud resource through AzAPI, assigns the
 current principal the `Anyscale Platform Administrator Role` at subscription scope,
 and passes the cloud deployment ID to the AKS operator extension. The extension's
 Marketplace plan is part of this bound deployment, not a separate onboarding path.
-Terraform also prepares Gateway API ingress for Ray services and creates the
-Workload Identity federation and Kubernetes RBAC bindings the operator needs.
+Terraform enables the AKS-managed Gateway controller and waits until its
+`approuting-istio` class and authenticated Kubernetes API access are stable. It
+then prepares Gateway API ingress for Ray services and creates the Workload
+Identity federation and Kubernetes RBAC bindings the operator needs.
 
 Example completion lines:
 
@@ -263,7 +265,7 @@ NAME                                     READY   STATUS    RESTARTS   AGE   IP
 pod/anyscale-operator-<pod-suffix>        3/3     Running   0          <age> <pod-ip>
 
 NAME                                                CLASS              ADDRESS        PROGRAMMED   AGE
-gateway.gateway.networking.k8s.io/anyscale-gateway  istio  <gateway-ip>  True          <age>
+gateway.gateway.networking.k8s.io/anyscale-gateway  approuting-istio   <gateway-ip>   True         <age>
 ```
 
 Confirm the Gateway has been programmed:

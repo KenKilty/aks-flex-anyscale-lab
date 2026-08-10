@@ -18,19 +18,15 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT_DIR}"
 
 # -----------------------------------------------------------------------
-# Known unfixable high-severity CVEs as of 2026-08-04.
+# Known unfixable high-severity CVEs as of 2026-08-10.
 # Review these whenever Docusaurus or serialize-javascript is updated.
 # -----------------------------------------------------------------------
 KNOWN_UNFIXED_HIGHS=(
   "GHSA-5c6j-r48x-rmvq" # serialize-javascript RCE via RegExp.flags (build-time only, fixedIn: null)
   "GHSA-qj8w-gfj5-8c6v" # serialize-javascript DoS via array-like objects (build-time only, fixedIn: null)
   "GHSA-w5hq-g745-h8pq" # uuid missing buffer bounds check in v3/v5/v6 (build-time only, only fix requires breaking Docusaurus downgrade)
-  "GHSA-v2hh-gcrm-f6hx" # fast-uri build-time host confusion; 3.1.5 is not available from the configured registry
-  "GHSA-7p8r-x3mc-p8w7" # fast-uri build-time host confusion; 3.1.5 is not available from the configured registry
-)
-
-UNAVAILABLE_FIX_SPECS=(
-  "fast-uri@3.1.5"
+  "GHSA-w3rx-r6r6-pgpr" # image-size ICNS parser DoS; build-time parser receives only trusted repository images, fixedIn: null
+  "GHSA-5p2g-fcmc-qvqq" # image-size JXL/HEIF parser DoS; build-time parser receives only trusted repository images, fixedIn: null
 )
 
 die() {
@@ -97,13 +93,7 @@ if [[ -n "${HIGH_PACKAGES}" ]]; then
     die "npm audit: unreviewed high-severity advisories block commit"
   fi
 
-  for spec in "${UNAVAILABLE_FIX_SPECS[@]}"; do
-    if npm view "${spec}" version --json >/dev/null 2>&1; then
-      die "npm audit: ${spec} is now available; remove its exception and update the lockfile"
-    fi
-  done
-
-  printf '[audit] All highs are in the reviewed exception list; advertised patch packages remain unavailable. Passing with warning.\n\n'
+  printf '[audit] All highs are in the reviewed exception list. Passing with warning.\n\n'
 fi
 
 printf '[audit] npm security gate passed.\n'

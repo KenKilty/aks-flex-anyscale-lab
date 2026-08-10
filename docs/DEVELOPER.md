@@ -192,7 +192,6 @@ Important GPU settings:
 TF_VAR_flex_host_vm_size="<gpu-vm-size>"
 TF_VAR_flex_host_source_image_reference='<gpu-ready-source-image-reference-json>'
 ANYSCALE_FLEX_GPU_ENABLED="true"
-ANYSCALE_RESULTS_GPU_ACCELERATOR_TYPE="<anyscale-accelerator-type>"
 ANYSCALE_RESULTS_GPU_PRODUCT_LABEL="<kubernetes-gpu-product-label>"
 ANYSCALE_RESULTS_GPU_TARGET="flex"
 ANYSCALE_RESULTS_GPU_WORKER_COUNT="1"

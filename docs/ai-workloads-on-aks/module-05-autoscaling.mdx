@@ -96,7 +96,7 @@ existing VM.
 Review the GPU values you selected in Module 1:
 
 ```bash
-grep -E '^(TF_VAR_flex_host_vm_size|TF_VAR_flex_host_source_image_reference|ANYSCALE_FLEX_GPU_ENABLED|ANYSCALE_RESULTS_GPU_)=' .env
+grep -E '^(TF_VAR_flex_host_vm_size|TF_VAR_flex_host_source_image_reference|ANYSCALE_FLEX_GPU_ENABLED|ANYSCALE_RESULTS_GPU_[A-Z_]+)=' .env
 ```
 
 Enable this path only after you confirm quota and capacity for the selected GPU
@@ -225,7 +225,7 @@ Example output:
 }
 
 pod/anyscale-operator-<pod-suffix>   3/3   Running
-gateway.gateway.networking.k8s.io/anyscale-gateway   istio   <gateway-address>   True
+gateway.gateway.networking.k8s.io/anyscale-gateway   approuting-istio   <gateway-address>   True
 ```
 
 :::warning Resolve failed checks before continuing

@@ -21,6 +21,22 @@ resource "terraform_data" "cilium" {
     command = <<-EOT
       set -euo pipefail
 
+      NETWORK_PLUGIN="$(az aks show \
+        --resource-group "$AKS_RESOURCE_GROUP" \
+        --name "$AKS_CLUSTER_NAME" \
+        --query 'networkProfile.networkPlugin' \
+        -o tsv)"
+      POD_CIDR="$(az aks show \
+        --resource-group "$AKS_RESOURCE_GROUP" \
+        --name "$AKS_CLUSTER_NAME" \
+        --query 'networkProfile.podCidr' \
+        -o tsv)"
+      if [[ "$NETWORK_PLUGIN" != "none" || "$POD_CIDR" != "$CILIUM_POD_CIDR" ]]; then
+        printf 'error: AKS must report networkPlugin=none and podCidr=%s before Flex provisioning; observed networkPlugin=%s podCidr=%s\n' \
+          "$CILIUM_POD_CIDR" "$NETWORK_PLUGIN" "$POD_CIDR" >&2
+        exit 1
+      fi
+
       az aks get-credentials \
         --resource-group "$AKS_RESOURCE_GROUP" \
         --name "$AKS_CLUSTER_NAME" \
@@ -71,6 +87,14 @@ resource "azapi_update_resource" "managed_istio_gateway_api" {
         gatewayAPI = {
           installation = "Standard"
         }
+        webAppRouting = {
+          enabled = true
+          gatewayAPIImplementations = {
+            appRoutingIstio = {
+              mode = "Enabled"
+            }
+          }
+        }
       }
     }
   }
@@ -81,4 +105,49 @@ resource "azapi_update_resource" "managed_istio_gateway_api" {
   }
 
   depends_on = [terraform_data.cilium]
+}
+
+resource "terraform_data" "managed_istio_ready" {
+  triggers_replace = [azapi_update_resource.managed_istio_gateway_api.id]
+
+  provisioner "local-exec" {
+    interpreter = ["/usr/bin/env", "bash", "-c"]
+
+    environment = {
+      AKS_CLUSTER_NAME   = module.aks.cluster_name
+      AKS_RESOURCE_GROUP = azurerm_resource_group.this.name
+    }
+
+    command = <<-EOT
+      set -euo pipefail
+
+      az aks get-credentials \
+        --resource-group "$AKS_RESOURCE_GROUP" \
+        --name "$AKS_CLUSTER_NAME" \
+        --overwrite-existing \
+        --only-show-errors >/dev/null
+      kubelogin convert-kubeconfig -l azurecli >/dev/null
+
+      CONSECUTIVE_SUCCESSES=0
+      for ATTEMPT in $(seq 1 120); do
+        CLASS_ACCEPTED="$(kubectl get gatewayclass approuting-istio -o jsonpath='{.status.conditions[?(@.type=="Accepted")].status}' --request-timeout=10s 2>/dev/null || true)"
+        if [[ "$CLASS_ACCEPTED" == "True" ]] && kubectl get --raw=/readyz --request-timeout=10s >/dev/null 2>&1; then
+          CONSECUTIVE_SUCCESSES=$((CONSECUTIVE_SUCCESSES + 1))
+          if [[ "$CONSECUTIVE_SUCCESSES" -ge 5 ]]; then
+            printf 'AKS App Routing Istio is ready and authenticated API access is stable.\n'
+            exit 0
+          fi
+        else
+          CONSECUTIVE_SUCCESSES=0
+        fi
+        sleep 5
+      done
+
+      kubectl get gatewayclass -o wide || true
+      printf 'error: AKS App Routing Istio did not become ready with stable API access within 10 minutes\n' >&2
+      exit 1
+    EOT
+  }
+
+  depends_on = [azapi_update_resource.managed_istio_gateway_api]
 }

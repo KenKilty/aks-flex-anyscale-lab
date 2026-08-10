@@ -16,7 +16,7 @@ locals {
   anyscale_gateway_configuration = {
     enabled     = "true"
     name        = var.anyscale_gateway_name
-    class_name  = "istio"
+    class_name  = "approuting-istio"
     namespace   = var.anyscale_operator_namespace
     api_version = "gateway.networking.k8s.io/v1"
     address     = local.anyscale_gateway_address
@@ -259,7 +259,7 @@ resource "azurerm_kubernetes_cluster_extension" "anyscale_operator" {
     azapi_resource.anyscale_platform,
     azurerm_role_assignment.anyscale_platform,
     azurerm_public_ip.anyscale_gateway,
-    azapi_update_resource.managed_istio_gateway_api,
+    terraform_data.managed_istio_ready,
   ]
 }
 
@@ -304,7 +304,7 @@ resource "null_resource" "anyscale_gateway_static_ip" {
         name: $GATEWAY_NAME
         namespace: $GATEWAY_NAMESPACE
       spec:
-        gatewayClassName: istio
+        gatewayClassName: approuting-istio
         listeners:
           - name: http
             port: 80
