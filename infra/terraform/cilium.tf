@@ -2,11 +2,10 @@ locals {
   managed_istio_gateway_api_managed_cluster_api_type = "Microsoft.ContainerService/managedClusters@2026-03-02-preview"
 }
 
-resource "terraform_data" "cilium" {
+resource "terraform_data" "managed_cni_ready" {
   triggers_replace = [
     module.aks.aks_provisioning_validation,
     var.cilium_pod_cidr,
-    var.service_cidr,
   ]
 
   provisioner "local-exec" {
@@ -15,25 +14,24 @@ resource "terraform_data" "cilium" {
     environment = {
       AKS_CLUSTER_NAME   = module.aks.cluster_name
       AKS_RESOURCE_GROUP = azurerm_resource_group.this.name
-      CILIUM_POD_CIDR    = var.cilium_pod_cidr
+      AKS_POD_CIDR       = var.cilium_pod_cidr
     }
 
     command = <<-EOT
       set -euo pipefail
 
-      NETWORK_PLUGIN="$(az aks show \
+      NETWORK_PROFILE="$(az aks show \
         --resource-group "$AKS_RESOURCE_GROUP" \
         --name "$AKS_CLUSTER_NAME" \
-        --query 'networkProfile.networkPlugin' \
-        -o tsv)"
-      POD_CIDR="$(az aks show \
-        --resource-group "$AKS_RESOURCE_GROUP" \
-        --name "$AKS_CLUSTER_NAME" \
-        --query 'networkProfile.podCidr' \
-        -o tsv)"
-      if [[ "$NETWORK_PLUGIN" != "none" || "$POD_CIDR" != "$CILIUM_POD_CIDR" ]]; then
-        printf 'error: AKS must report networkPlugin=none and podCidr=%s before Flex provisioning; observed networkPlugin=%s podCidr=%s\n' \
-          "$CILIUM_POD_CIDR" "$NETWORK_PLUGIN" "$POD_CIDR" >&2
+        --query networkProfile \
+        -o json)"
+      NETWORK_PLUGIN="$(jq -r '.networkPlugin // empty' <<<"$NETWORK_PROFILE")"
+      NETWORK_PLUGIN_MODE="$(jq -r '.networkPluginMode // empty' <<<"$NETWORK_PROFILE")"
+      NETWORK_DATA_PLANE="$(jq -r '.networkDataplane // .networkDataPlane // empty' <<<"$NETWORK_PROFILE")"
+      POD_CIDR="$(jq -r '.podCidr // empty' <<<"$NETWORK_PROFILE")"
+      if [[ "$NETWORK_PLUGIN" != "azure" || "$NETWORK_PLUGIN_MODE" != "overlay" || "$NETWORK_DATA_PLANE" != "cilium" || "$POD_CIDR" != "$AKS_POD_CIDR" ]]; then
+        printf 'error: AKS must report Azure CNI Overlay powered by Cilium with podCidr=%s; observed plugin=%s mode=%s dataplane=%s podCidr=%s\n' \
+          "$AKS_POD_CIDR" "$NETWORK_PLUGIN" "$NETWORK_PLUGIN_MODE" "$NETWORK_DATA_PLANE" "$POD_CIDR" >&2
         exit 1
       fi
 
@@ -44,33 +42,7 @@ resource "terraform_data" "cilium" {
         --only-show-errors >/dev/null
       kubelogin convert-kubeconfig -l azurecli >/dev/null
 
-      helm repo add cilium https://helm.cilium.io/ --force-update >/dev/null
-      helm repo update cilium >/dev/null
-
-      CILIUM_RELEASE_STATUS="$(helm status cilium --namespace kube-system -o json 2>/dev/null | jq -r '.info.status // empty' || true)"
-      if [[ "$CILIUM_RELEASE_STATUS" == pending-* ]]; then
-        LAST_DEPLOYED_REVISION="$(helm history cilium --namespace kube-system -o json | jq -r '[.[] | select(.status == "deployed")] | last | .revision // empty')"
-        if [[ -z "$LAST_DEPLOYED_REVISION" ]]; then
-          printf 'error: Cilium release is %s but has no deployed revision to restore\n' "$CILIUM_RELEASE_STATUS" >&2
-          exit 1
-        fi
-        helm rollback cilium "$LAST_DEPLOYED_REVISION" \
-          --namespace kube-system \
-          --wait \
-          --timeout 10m
-      fi
-
-      helm upgrade --install cilium cilium/cilium \
-        --namespace kube-system \
-        --set ipam.mode=cluster-pool \
-        --set "ipam.operator.clusterPoolIPv4PodCIDRList={$${CILIUM_POD_CIDR}}" \
-        --set ipam.operator.clusterPoolIPv4MaskSize=24 \
-        --set routingMode=tunnel \
-        --set tunnelProtocol=vxlan \
-        --set kubeProxyReplacement=true
-
       kubectl -n kube-system rollout status daemonset/cilium --timeout=10m
-      kubectl -n kube-system rollout status daemonset/cilium-envoy --timeout=10m
     EOT
   }
 
@@ -104,7 +76,7 @@ resource "azapi_update_resource" "managed_istio_gateway_api" {
     update = "1h"
   }
 
-  depends_on = [terraform_data.cilium]
+  depends_on = [terraform_data.managed_cni_ready]
 }
 
 resource "terraform_data" "managed_istio_ready" {

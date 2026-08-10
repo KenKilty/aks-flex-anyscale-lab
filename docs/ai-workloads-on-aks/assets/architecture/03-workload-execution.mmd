@@ -15,7 +15,7 @@ sequenceDiagram
   operator->>api: Create Ray cluster and job resources
   api-->>head: Schedule the head pod in Region A
   api-->>worker: Schedule the worker pod on aksflexnodes
-  Note over head,worker: Ray traffic crosses the Cilium pod network
+  Note over head,worker: Ray traffic crosses managed Cilium and Unbounded pod networks
   head->>worker: Start distributed training
   loop Training steps
     worker-->>head: Return loss and runtime metrics

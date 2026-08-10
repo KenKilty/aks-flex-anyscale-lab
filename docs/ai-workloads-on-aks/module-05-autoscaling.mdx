@@ -10,16 +10,16 @@ tags:
 ---
 
 Before you submit the workload, confirm that every part of its path is healthy.
-You will check the CPU scale profile, Cilium service routing, Flex DNS, and the
-Anyscale Gateway API path without starting a Ray job.
+You will check the CPU scale profile, mixed-CNI service routing, Flex DNS, and
+the Anyscale Gateway API path without starting a Ray job.
 
 ## What You Will Do
 
 You will set quota-safe bounds for the home-region CPU node pool and separate
 that autoscaling behavior from the fixed Flex host capacity. Then you will rerun
-the Cilium, DNS, HTTPS egress, and Anyscale Gateway checks so the workload starts
-from a healthy cluster state. If you enabled the GPU path, you will also confirm
-that the Flex host exposes allocatable `nvidia.com/gpu`.
+the managed Cilium, Unbounded, DNS, HTTPS egress, and Anyscale Gateway checks so
+the workload starts from a healthy cluster state. If you enabled the GPU path,
+you will also confirm that the Flex host exposes allocatable `nvidia.com/gpu`.
 
 ## Understanding the capacity model
 
@@ -163,9 +163,9 @@ NVIDIA device plugin ready: <gpu-count> allocatable GPU(s) in pool aksflexnodes
 
 ### CPU and GPU paths
 
-Run the readiness checks for the CPU scale profile, selected GPU settings, Cilium,
-the Flex node, DNS, HTTPS access, traffic between AKS and Flex pods, and the
-Anyscale extension and Gateway:
+Run the readiness checks for the CPU scale profile, selected GPU settings,
+managed Cilium, Unbounded ownership on Flex, DNS, HTTPS access, bilateral pod
+and ClusterIP traffic, and the Anyscale extension and Gateway:
 
 ```bash
 ./scripts/validate-lab.sh m5
@@ -176,12 +176,12 @@ Expected output:
 ```text
 PASS M5-01 CPU node pool autoscaling configured
 SKIP M5-02 GPU path disabled in current env profile
-PASS Unmanaged upstream Cilium cluster-pool IPAM and VXLAN ready
+PASS Azure CNI Overlay powered by managed Cilium ready on AKS
 PASS Flex node <flex-node-name> Ready in <region-b>
-PASS Cilium agent and Envoy Ready on Flex node <flex-node-name>
+PASS Unbounded owns Flex CNI and kube-proxy without replacing managed AKS Cilium
 PASS Flex ClusterFirst DNS resolves Anyscale and Kubernetes service names
 PASS Flex pod HTTPS egress reaches console.azure.anyscale.com
-PASS Upstream Cilium connectivity: AKS and Flex pods exchanged traffic and AKS reached Flex ClusterIP <service-ip>:8080
+PASS Mixed-CNI connectivity: bilateral pod traffic and ClusterIP routing from AKS and Flex
 PASS Anyscale extension and operator pods ready
 PASS Gateway anyscale-operator/anyscale-gateway programmed at <gateway-address>
 ```
@@ -189,11 +189,11 @@ PASS Gateway anyscale-operator/anyscale-gateway programmed at <gateway-address>
 The command writes pod logs and Kubernetes JSON under
 `.cache/lab-validation/m5-flex-network/`. If a check fails, use that directory first;
 it contains the short-lived diagnostic pod output before cleanup. A node or
-Cilium failure points to the saved node, network-profile, Cilium-values, and pod
-records. A DNS, HTTPS egress, or cross-node traffic failure points to the matching
-diagnostic pod log. Stop before submitting a workload, correct the failed layer,
-and rerun `./scripts/validate-lab.sh m5` until every required check reports
-`PASS`.
+CNI ownership failure points to the saved node, network profile, Unbounded site,
+CNI-file, and TC-filter records. A DNS, HTTPS egress, or cross-node traffic
+failure points to the matching diagnostic pod log. Stop before submitting a
+workload, correct the failed layer, and rerun `./scripts/validate-lab.sh m5`
+until every required check reports `PASS`.
 
 ## Step 5: Inspect Anyscale service health
 
@@ -230,7 +230,7 @@ gateway.gateway.networking.k8s.io/anyscale-gateway   approuting-istio   <gateway
 
 :::warning Resolve failed checks before continuing
 Do not submit the workload if any check above fails. Ray services need healthy
-Cilium routing, ClusterFirst DNS, and an available Anyscale Gateway.
+mixed-CNI routing, ClusterFirst DNS, and an available Anyscale Gateway.
 :::
 
 ## Step 6: Verify that no workload pods remain on Flex
@@ -244,9 +244,9 @@ kubectl get pods -A -o wide --field-selector spec.nodeName="$FLEX_NODE"
 CPU path example output:
 
 ```text
-NAMESPACE     NAME                    READY   STATUS    NODE
-kube-system   cilium-abcde            1/1     Running   <flex-node-name>
-kube-system   cilium-envoy-abcde      1/1     Running   <flex-node-name>
+NAMESPACE          NAME                                      READY   STATUS    NODE
+unbounded-system   unbounded-net-node-abcde                  1/1     Running   <flex-node-name>
+unbounded-system   unbounded-net-kube-proxy-flex-abcde       1/1     Running   <flex-node-name>
 ```
 
 The GPU path also includes the NVIDIA device-plugin pod installed in Step 4:
@@ -255,8 +255,9 @@ The GPU path also includes the NVIDIA device-plugin pod installed in Step 4:
 kube-system   nvidia-device-plugin-daemonset-abcde   1/1   Running   <flex-node-name>
 ```
 
-Before submission, the CPU path should show the Cilium and Cilium Envoy system
-pods, while the GPU path should also show the NVIDIA device plugin. Any
+Before submission, the CPU path should show the Unbounded node and Flex
+kube-proxy system pods, while the GPU path should also show the NVIDIA device
+plugin. Managed Cilium must not run on the Flex node. Any
 application or prior Ray workload pod is leftover from an earlier run and should
 finish or be removed before you continue.
 

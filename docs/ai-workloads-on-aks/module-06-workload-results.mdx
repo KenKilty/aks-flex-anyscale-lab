@@ -51,7 +51,7 @@ sequenceDiagram
   operator->>api: Create Ray cluster and job resources
   api-->>head: Schedule the head pod in Region A
   api-->>worker: Schedule the worker pod on aksflexnodes
-  Note over head,worker: Ray traffic crosses the Cilium pod network
+  Note over head,worker: Ray traffic crosses managed Cilium and Unbounded pod networks
   head->>worker: Start distributed training
   loop Training steps
     worker-->>head: Return loss and runtime metrics
@@ -93,7 +93,8 @@ else
   echo "PASS: broad kubernetes.azure.com/cluster label is absent"
 fi
 kubectl -n kube-system rollout status ds/cilium --timeout=3m
-kubectl -n kube-system rollout status ds/cilium-envoy --timeout=3m
+kubectl -n unbounded-system rollout status ds/unbounded-net-node --timeout=3m
+kubectl -n unbounded-system rollout status ds/unbounded-net-kube-proxy-flex --timeout=3m
 ```
 
 Expected output:
@@ -101,7 +102,8 @@ Expected output:
 ```text
 PASS: broad kubernetes.azure.com/cluster label is absent
 daemon set "cilium" successfully rolled out
-daemon set "cilium-envoy" successfully rolled out
+daemon set "unbounded-net-node" successfully rolled out
+daemon set "unbounded-net-kube-proxy-flex" successfully rolled out
 ```
 
 ## Step 2: Choose the run size
@@ -170,8 +172,9 @@ info: submit attempt 1/3 for <cpu-job-name>
 
 **Expected CPU placement:** The CPU run places the Ray head on AKS CPU capacity
 in Region A and the Ray worker on the Flex node in Region B. The worker uses
-`ClusterFirst` DNS, and Cilium allocates both pod addresses from
-`TF_VAR_cilium_pod_cidr`.
+`ClusterFirst` DNS. Azure CNI Overlay allocates the head address from
+`TF_VAR_cilium_pod_cidr`, while Unbounded allocates the worker address from
+`TF_VAR_unbounded_flex_pod_cidr`.
 
 ## GPU path: Submit through Anyscale
 
@@ -353,8 +356,9 @@ placement record after cleanup.
 
 Verify the worker ran on Flex by checking worker log lines for the Ray worker IP,
 then confirm Kubernetes placed that worker pod on the Flex node. The
-worker pod IP comes from the Cilium cluster pool (for example `10.83.0.0/16`), and
-Cilium carries the traffic through its VXLAN tunnel between the AKS and Flex nodes.
+worker pod IP comes from the Unbounded Flex pod range (for example
+`10.84.0.0/16`). Unbounded SitePeering carries traffic between that range and
+the managed AKS pod range.
 
 ```bash
 source .env
@@ -463,7 +467,8 @@ Grafana** from the Metrics page. The direct Grafana page should keep the same
 
 On the Grafana overview, check **Node Count** and **Workload Instances**. The GPU
 run should show one head node and one `gpu-worker`. The workload instance IPs
-should match the placement results: both are allocated from the Cilium pod CIDR.
+should match the placement results: the head uses the managed AKS pod CIDR and
+the worker uses the separate Unbounded Flex pod CIDR.
 
 ![Grafana overview showing the Ray head and GPU worker](./assets/anyscale-console/job-metrics-grafana-overview-gpu-results.png)
 

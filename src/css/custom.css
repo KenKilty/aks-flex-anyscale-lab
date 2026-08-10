@@ -60,3 +60,15 @@
 .translation-bubble p:last-child {
   margin-bottom: 0;
 }
+
+@media (max-width: 700px) {
+  .network-explainer {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .translation-bubble::before {
+    top: -17px;
+    left: calc(50% - 15px);
+    transform: rotate(135deg);
+  }
+}

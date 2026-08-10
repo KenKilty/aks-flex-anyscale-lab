@@ -85,6 +85,12 @@ variable "cilium_pod_cidr" {
   type = string
 }
 
+variable "unbounded_flex_pod_cidr" {
+  description = "Pod CIDR allocated by Unbounded to Flex nodes. Must not overlap AKS pod, service, node, or connected network CIDRs."
+  type        = string
+  default     = "10.84.0.0/16"
+}
+
 variable "dns_forwarding_rules" {
   type = map(object({
     domain_name = string

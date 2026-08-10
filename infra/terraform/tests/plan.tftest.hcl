@@ -12,14 +12,14 @@ mock_provider "azurerm" {
 mock_provider "azapi" {}
 
 variables {
-  azure_subscription_id = "00000000-0000-0000-0000-000000000000"
-  azure_tenant_id       = "00000000-0000-0000-0000-000000000000"
-  project               = "tftest"
-  environment           = "ci"
-  azure_location        = "westus3"
-  region_short          = "wus3"
-  flex_region           = "westus2"
-  flex_region_short     = "wus2"
+  azure_subscription_id          = "00000000-0000-0000-0000-000000000000"
+  azure_tenant_id                = "00000000-0000-0000-0000-000000000000"
+  project                        = "tftest"
+  environment                    = "ci"
+  azure_location                 = "westus3"
+  region_short                   = "wus3"
+  flex_region                    = "westus2"
+  flex_region_short              = "wus2"
   flex_host_admin_ssh_public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMQK9/E/MPH5nsjSgjIZ4YPpsUv+LwE1F8oLJxC7l7N5 terraform-test"
 
   vnet_address_space = ["10.50.0.0/16"]
@@ -33,6 +33,7 @@ variables {
   flex_vnet_address_space = ["10.60.0.0/16"]
   flex_subnet_cidr        = "10.60.1.0/24"
   cilium_pod_cidr         = "10.83.0.0/16"
+  unbounded_flex_pod_cidr = "10.84.0.0/16"
   dns_forwarding_rules    = {}
 
   system_vm_size             = "Standard_D4s_v5"
@@ -134,8 +135,8 @@ run "foundation_plan_contract" {
   }
 
   assert {
-    condition     = output.foundation_contract.aks_contract.network_plugin == "none" && output.foundation_contract.aks_contract.pod_cidr == "10.83.0.0/16"
-    error_message = "AKS must reserve the unmanaged Cilium cluster-pool CIDR without an Azure-managed CNI."
+    condition     = output.foundation_contract.aks_contract.network_plugin == "azure" && output.foundation_contract.aks_contract.network_plugin_mode == "overlay" && output.foundation_contract.aks_contract.network_data_plane == "cilium" && output.foundation_contract.aks_contract.pod_cidr == "10.83.0.0/16"
+    error_message = "AKS-managed nodes must use Azure CNI Overlay powered by Cilium with the configured AKS pod CIDR."
   }
 
   assert {

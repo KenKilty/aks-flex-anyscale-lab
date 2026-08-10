@@ -33,7 +33,6 @@ main() {
   local artifact_dir anyscale_host_name
 
   need_cmd az
-  need_cmd helm
   need_cmd jq
   need_cmd kubectl
 
@@ -48,9 +47,9 @@ main() {
   artifact_dir="${STATE_DIR}/m5-flex-network"
   anyscale_host_name="$(lab_gate_anyscale_host_name)"
 
-  lab_gate_cilium_ready "${artifact_dir}"
+  lab_gate_managed_cilium_ready "${artifact_dir}"
   lab_gate_flex_node_ready "${artifact_dir}"
-  lab_gate_cilium_flex_ready "${artifact_dir}"
+  lab_gate_unbounded_flex_ready "${artifact_dir}"
   lab_gate_flex_dns_ready "${artifact_dir}" "${anyscale_host_name}"
   lab_gate_flex_https_egress "${artifact_dir}" "${anyscale_host_name}"
   lab_gate_aks_to_flex_line_of_sight "${artifact_dir}"

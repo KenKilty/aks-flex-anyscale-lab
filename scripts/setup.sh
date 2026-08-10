@@ -140,6 +140,7 @@ ensure_defaults() {
   [[ -n "${TF_VAR_flex_host_os_disk_size_gb:-}" ]] || TF_VAR_flex_host_os_disk_size_gb="256"
   [[ -n "${TF_VAR_flex_host_source_image_reference:-}" ]] || TF_VAR_flex_host_source_image_reference='{"publisher":"Canonical","offer":"ubuntu-24_04-lts","sku":"server","version":"latest"}'
   [[ -n "${TF_VAR_cilium_pod_cidr:-}" ]] || TF_VAR_cilium_pod_cidr="10.83.0.0/16"
+  [[ -n "${TF_VAR_unbounded_flex_pod_cidr:-}" ]] || TF_VAR_unbounded_flex_pod_cidr="10.84.0.0/16"
 
   if [[ "${TF_VAR_flex_host_enabled}" == "true" && -z "${TF_VAR_flex_host_admin_ssh_public_key:-}" ]]; then
     [[ -f "${SSH_PRIVATE_KEY_PATH}.pub" ]] || die "Missing TF_VAR_flex_host_admin_ssh_public_key and SSH public key ${SSH_PRIVATE_KEY_PATH}.pub"
@@ -162,6 +163,7 @@ ensure_defaults() {
   export TF_VAR_flex_host_source_image_reference
   export TF_VAR_flex_host_admin_ssh_public_key
   export TF_VAR_cilium_pod_cidr
+  export TF_VAR_unbounded_flex_pod_cidr
 }
 
 sync_azure_context() {
@@ -177,6 +179,48 @@ sync_azure_context() {
   [[ -n "${TF_VAR_azure_tenant_id:-}" && "${TF_VAR_azure_tenant_id}" != "00000000-0000-0000-0000-000000000000" ]] || TF_VAR_azure_tenant_id="${tenant_id}"
 
   export ARM_SUBSCRIPTION_ID ARM_TENANT_ID TF_VAR_azure_subscription_id TF_VAR_azure_tenant_id
+}
+
+validate_network_cidrs() {
+  local validation_error
+
+  validation_error="$(
+    python3 - \
+      "${TF_VAR_vnet_address_space}" \
+      "${TF_VAR_flex_vnet_address_space}" \
+      "${TF_VAR_service_cidr}" \
+      "${TF_VAR_cilium_pod_cidr}" \
+      "${TF_VAR_unbounded_flex_pod_cidr}" <<'PY'
+import ipaddress
+import itertools
+import json
+import sys
+
+groups = {
+    "AKS VNet": json.loads(sys.argv[1]),
+    "Flex VNet": json.loads(sys.argv[2]),
+    "service CIDR": [sys.argv[3]],
+    "AKS pod CIDR": [sys.argv[4]],
+    "Flex pod CIDR": [sys.argv[5]],
+}
+
+try:
+    networks = {
+        name: [ipaddress.ip_network(value) for value in values]
+        for name, values in groups.items()
+    }
+except (ValueError, TypeError, json.JSONDecodeError) as error:
+    print(f"invalid network CIDR configuration: {error}")
+    raise SystemExit(1)
+
+for (left_name, left_networks), (right_name, right_networks) in itertools.combinations(networks.items(), 2):
+    for left in left_networks:
+        for right in right_networks:
+            if left.version == right.version and left.overlaps(right):
+                print(f"network ranges overlap: {left_name} {left} and {right_name} {right}")
+                raise SystemExit(1)
+PY
+  )" || die "${validation_error}"
 }
 
 render_tfvars() {
@@ -207,6 +251,7 @@ render_tfvars() {
     TF_VAR_vnet_address_space
     TF_VAR_subnet_cidrs
     TF_VAR_cilium_pod_cidr
+    TF_VAR_unbounded_flex_pod_cidr
     TF_VAR_flex_vnet_address_space
     TF_VAR_flex_subnet_cidr
     TF_VAR_dns_forwarding_rules
@@ -238,6 +283,7 @@ render_tfvars() {
   for name in "${required_vars[@]}"; do
     [[ -n "${!name:-}" ]] || die "Missing required variable ${name} in .env"
   done
+  validate_network_cidrs
 
   mkdir -p "${TERRAFORM_DIR}"
 
@@ -270,6 +316,7 @@ render_tfvars() {
     --arg container_insights_namespace_filtering_mode "${TF_VAR_container_insights_namespace_filtering_mode}" \
     --arg flex_subnet_cidr "${TF_VAR_flex_subnet_cidr}" \
     --arg cilium_pod_cidr "${TF_VAR_cilium_pod_cidr}" \
+    --arg unbounded_flex_pod_cidr "${TF_VAR_unbounded_flex_pod_cidr}" \
     --argjson anyscale_operator_identity "${TF_VAR_anyscale_operator_identity}" \
     --argjson anyscale_enabled "${TF_VAR_anyscale_enabled}" \
     --argjson flex_host_enabled "${TF_VAR_flex_host_enabled}" \
@@ -342,6 +389,7 @@ render_tfvars() {
       flex_vnet_address_space: $flex_vnet_address_space,
       flex_subnet_cidr: $flex_subnet_cidr,
       cilium_pod_cidr: $cilium_pod_cidr,
+      unbounded_flex_pod_cidr: $unbounded_flex_pod_cidr,
       dns_forwarding_rules: $dns_forwarding_rules,
       availability_zones: $availability_zones,
       system_node_pool_min_count: $system_node_pool_min_count,
@@ -629,16 +677,20 @@ approve_flex_daemon_csrs() {
 }
 
 require_supported_flex_networking() {
-  local cluster_rg="$1" cluster_name="$2" network_plugin
+  local cluster_rg="$1" cluster_name="$2" network_profile network_plugin network_plugin_mode network_data_plane
 
-  network_plugin="$(az aks show \
+  network_profile="$(az aks show \
     --resource-group "${cluster_rg}" \
     --name "${cluster_name}" \
-    --query 'networkProfile.networkPlugin' \
-    --output tsv \
+    --query networkProfile \
+    --output json \
     --only-show-errors)"
+  network_plugin="$(jq -r '.networkPlugin // empty' <<<"${network_profile}")"
+  network_plugin_mode="$(jq -r '.networkPluginMode // empty' <<<"${network_profile}")"
+  network_data_plane="$(jq -r '.networkDataplane // .networkDataPlane // empty' <<<"${network_profile}")"
 
-  [[ "${network_plugin}" == "none" ]] || die "AKS Flex Node requires network_plugin=none with unmanaged upstream Cilium. This cluster uses ${network_plugin}; recreate it with the lab's no-CNI AKS configuration before generating a Flex join credential."
+  [[ "${network_plugin}" == "azure" && "${network_plugin_mode}" == "overlay" && "${network_data_plane}" == "cilium" ]] ||
+    die "This mixed-CNI experiment requires Azure CNI Overlay powered by Cilium on AKS-managed nodes. Observed plugin=${network_plugin:-unset} mode=${network_plugin_mode:-unset} dataplane=${network_data_plane:-unset}."
 }
 
 generate_flex_config() {
@@ -1000,6 +1052,11 @@ doctor_check_env() {
     TF_VAR_cpu_vm_size
     TF_VAR_flex_host_vm_size
     TF_VAR_gpu_pool_configs
+    TF_VAR_vnet_address_space
+    TF_VAR_flex_vnet_address_space
+    TF_VAR_service_cidr
+    TF_VAR_cilium_pod_cidr
+    TF_VAR_unbounded_flex_pod_cidr
   )
   local variable_name
 
@@ -1012,6 +1069,7 @@ doctor_check_env() {
     die "TF_VAR_region_short must contain only lowercase letters and numbers"
   [[ "${TF_VAR_flex_region_short}" =~ ^[a-z0-9]+$ ]] ||
     die "TF_VAR_flex_region_short must contain only lowercase letters and numbers"
+  validate_network_cidrs
 
   doctor_pass "required environment values are present and parseable"
 }
@@ -1211,6 +1269,7 @@ main() {
   render-tfvars)
     need_cmd az
     need_cmd jq
+    need_cmd python3
     source_env
     sync_azure_context
     render_tfvars

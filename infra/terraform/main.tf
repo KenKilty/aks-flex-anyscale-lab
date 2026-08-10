@@ -154,7 +154,7 @@ module "flex_host" {
   depends_on = [
     azurerm_virtual_network_peering.aks_to_flex,
     azurerm_virtual_network_peering.flex_to_aks,
-    terraform_data.cilium,
+    terraform_data.unbounded_net,
   ]
 }
 

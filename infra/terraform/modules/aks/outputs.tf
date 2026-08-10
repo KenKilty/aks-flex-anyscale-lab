@@ -43,6 +43,8 @@ output "private_mode" {
     api_server_subnet_id                = azurerm_kubernetes_cluster.this.api_server_access_profile[0].subnet_id
     outbound_type                       = azurerm_kubernetes_cluster.this.network_profile[0].outbound_type
     network_plugin                      = azurerm_kubernetes_cluster.this.network_profile[0].network_plugin
+    network_plugin_mode                 = azurerm_kubernetes_cluster.this.network_profile[0].network_plugin_mode
+    network_data_plane                  = azurerm_kubernetes_cluster.this.network_profile[0].network_data_plane
     pod_cidr                            = azurerm_kubernetes_cluster.this.network_profile[0].pod_cidr
     network_policy                      = azurerm_kubernetes_cluster.this.network_profile[0].network_policy
     sku_tier                            = azurerm_kubernetes_cluster.this.sku_tier

@@ -318,8 +318,8 @@ The distributed Ray job uses this placement:
 | Worker pod | Flex node `agentpool=aksflexnodes` in Region B | GPU-capable Flex node `agentpool=aksflexnodes` in Region B |
 | DNS policy | Normal `ClusterFirst` | Normal `ClusterFirst` after GPU enablement |
 
-Do not submit the workload until the Cilium, Flex networking, operator, and
-Gateway readiness checks pass. The CPU path then runs
+Do not submit the workload until managed Cilium, Unbounded Flex networking, the
+operator, and Gateway readiness checks pass. The CPU path then runs
 `./scripts/run-anyscale-workload.sh --mode cpu`.
 
 For the GPU path, continue only after you confirm quota and capacity for the GPU

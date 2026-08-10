@@ -26,6 +26,8 @@ output "cluster_contract" {
   value = {
     private_cluster_enabled            = false
     network_plugin                     = azurerm_kubernetes_cluster.this.network_profile[0].network_plugin
+    network_plugin_mode                = azurerm_kubernetes_cluster.this.network_profile[0].network_plugin_mode
+    network_data_plane                 = azurerm_kubernetes_cluster.this.network_profile[0].network_data_plane
     pod_cidr                           = azurerm_kubernetes_cluster.this.network_profile[0].pod_cidr
     network_policy                     = azurerm_kubernetes_cluster.this.network_profile[0].network_policy
     outbound_type                      = azurerm_kubernetes_cluster.this.network_profile[0].outbound_type

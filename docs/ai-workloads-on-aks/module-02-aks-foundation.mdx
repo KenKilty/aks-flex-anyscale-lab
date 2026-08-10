@@ -40,10 +40,11 @@ so the host has a cross-region network path when you join it to AKS. It also
 checks the live AKS network profile and waits for Cilium to become ready before
 it starts the Flex VM.
 
-Terraform creates AKS with no built-in CNI, then installs upstream Cilium with
-cluster-pool IPAM, a VXLAN tunnel, and kube-proxy replacement. Cilium on the AKS
-and Flex nodes allocates pod addresses from `TF_VAR_cilium_pod_cidr`, giving pods
-in both regions one cluster-wide address space.
+Terraform creates AKS with Azure CNI Overlay powered by managed Cilium. AKS
+allocates managed-node pod addresses from `TF_VAR_cilium_pod_cidr`. Module 3
+adds Unbounded for the Flex node with the separate
+`TF_VAR_unbounded_flex_pod_cidr`; the two CNI implementations keep distinct
+ownership while Unbounded SitePeering connects their pod routes.
 
 ## Step 1: Review your deployment settings
 
@@ -165,19 +166,17 @@ does not create an AKS GPU pool. AKS can run additional system pods that are not
 shown in the example. For every listed pod, check that `STATUS` is `Running` and
 that `READY` shows all expected containers ready.
 
-## Step 6: Verify the Cilium foundation
+## Step 6: Verify the managed Cilium foundation
 
-Terraform waits for the Cilium agent and Envoy DaemonSets to become ready on the
-AKS nodes before the apply completes. Check the live network profile and Cilium
-release before you provision the Flex host. The three commands are independent
-views of the same foundation:
+Terraform waits for the managed Cilium DaemonSet to become ready on the AKS
+nodes before the apply completes. Check the live network profile and agents
+before you provision the Flex host. These commands prove two parts of the same
+foundation:
 
-1. The AKS network profile proves that no built-in CNI owns pod networking and
-  shows the pod and service CIDRs.
-2. The Helm values prove that Cilium uses cluster-pool IPAM, VXLAN, and kube-proxy
-  replacement.
-3. The pod list proves that the Cilium agent and Envoy are running on the AKS
-  nodes.
+1. The AKS network profile proves that Azure CNI Overlay powered by Cilium owns
+   managed-node pod networking and shows the pod and service CIDRs.
+2. The pod list proves that the managed Cilium agents are running on the AKS
+   nodes.
 
 ```bash
 source .env
@@ -187,29 +186,28 @@ CLUSTER="aks-${TF_VAR_project}-${TF_VAR_environment}-${TF_VAR_region_short}"
 az aks show \
   --resource-group "$RG" \
   --name "$CLUSTER" \
-  --query 'networkProfile.{plugin:networkPlugin,podCidr:podCidr,serviceCidr:serviceCidr}' \
+  --query 'networkProfile.{plugin:networkPlugin,mode:networkPluginMode,dataPlane:networkDataplane,podCidr:podCidr,serviceCidr:serviceCidr}' \
   -o json
 
-helm -n kube-system get values cilium -o json
-kubectl -n kube-system get pods -l 'k8s-app in (cilium,cilium-envoy)' -o wide
+kubectl -n kube-system get pods -l k8s-app=cilium -o wide
 ```
 
 Expected network profile:
 
 ```json
 {
-  "plugin": "none",
+  "dataPlane": "cilium",
+  "mode": "overlay",
+  "plugin": "azure",
   "podCidr": "10.83.0.0/16",
   "serviceCidr": "10.100.0.0/16"
 }
 ```
 
-The Cilium values include `cluster-pool`, `tunnel`, `vxlan`, and
-`kubeProxyReplacement: true`. They follow the upstream AKS Flex Node Cilium
-sample. The final pod list must show the Cilium and Cilium Envoy pods in
-`Running` state on each current AKS node. Keep all three command outputs; together
-they record the CNI configuration and current agents that the Flex node will use
-when it joins.
+The pod list must show a managed Cilium pod in `Running` state on each current
+AKS node. No Helm-installed Cilium release should replace these agents. Keep the
+network profile and pod output; together they record the managed-node CNI before
+Module 3 adds the separate Flex network.
 
 ## Step 7: Verify the cross-region network connection
 
@@ -246,11 +244,10 @@ the network path before the Flex VM joins AKS.
 
 ## Success evidence
 
-You can move on when the `sys` node pool is `Ready`, Cilium and Cilium Envoy are
-running, and both VNet peerings show `Succeeded`. Keep the network profile,
-Cilium values, and peering output. Together, they show that AKS has no built-in
-CNI, Cilium is ready, and the cross-region network path is live before the Flex
-host joins.
+You can move on when the `sys` node pool is `Ready`, the managed Cilium agents
+are running, and both VNet peerings show `Succeeded`. Keep the network profile,
+Cilium pod list, and peering output. Together, they show that Azure CNI Overlay
+is ready and the cross-region network path is live before the Flex host joins.
 
 ## Next step
 

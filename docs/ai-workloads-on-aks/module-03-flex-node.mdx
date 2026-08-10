@@ -10,28 +10,30 @@ tags:
 ---
 
 Module 2 created a Linux VM in **Region B**. You will now join it to the AKS
-cluster in **Region A** as an AKS Flex node. Cilium and Envoy run on that node,
-giving its pods addresses and a network path to pods on the AKS node pools.
+cluster in **Region A** as an AKS Flex node. Unbounded owns CNI and kube-proxy
+on that node, while Azure CNI Overlay powered by managed Cilium remains the CNI
+for AKS-managed nodes.
 
 ## What You Will Do
 
-You will verify the no-CNI AKS profile, inspect the provisioned Flex VM, generate
-a join configuration from the current stable AKS Flex Node release, and
-bootstrap the host. You will then schedule test pods and confirm Cilium
-networking, DNS, HTTPS access, and traffic between the AKS and Flex nodes before
+You will verify the managed AKS network profile, inspect the provisioned Flex
+VM, generate a join configuration from the current stable AKS Flex Node release,
+and bootstrap the host. You will then schedule test pods and confirm Unbounded
+ownership, DNS, HTTPS access, and bilateral traffic between AKS and Flex before
 connecting Anyscale.
 
 ## How Flex networking works
 
 AKS Flex Node prepares the external machine and joins it to AKS as a worker. It
-does not provide the pod network. This lab installs Cilium on every AKS and Flex
-node to allocate pod addresses, route pod traffic, and implement Kubernetes
-services.
+does not provide the pod network. Managed Cilium allocates addresses and handles
+services on AKS nodes. Unbounded v0.2.2 allocates Flex pod addresses, runs
+kube-proxy only on Flex, and creates a direct `SitePeering` between the
+`aks-managed` and `flex` sites.
 
-The diagram follows one packet between pods on different nodes. Cilium wraps the
-packet in VXLAN, Azure routes that wrapped packet between the nodes' private IP
-addresses over VNet peering, and Cilium on the destination node unwraps it.
-Traffic between pods on the same node does not need the VXLAN step.
+The diagram follows one packet between sites. Unbounded discovers the managed
+AKS node pod `/24`s and the Flex node pod block, then uses its automatically
+selected tunnel protocol to carry traffic over the nodes' private IP addresses
+and VNet peering.
 
 <!-- Keep this diagram in sync with assets/architecture/02-flex-networking.mmd. -->
 
@@ -40,9 +42,9 @@ Traffic between pods on the same node does not need the VXLAN step.
 
 ```mermaid
 flowchart LR
-  aks["1. Region A<br/>AKS node and Ray head pod<br/>Cilium wraps cross-node traffic"]
-  network["2. Azure network<br/>Peered VNets carry VXLAN<br/>between node private IPs"]
-  flex["3. Region B<br/>Flex node and Ray worker pod<br/>Cilium unwraps the packet"]
+  aks["1. Region A<br/>AKS node and Ray head pod<br/>Managed Cilium owns pod networking"]
+  network["2. Azure network<br/>Unbounded SitePeering tunnel<br/>over peered VNet addresses"]
+  flex["3. Region B<br/>Flex node and Ray worker pod<br/>Unbounded owns CNI and kube-proxy"]
 
   aks --> network --> flex
 
@@ -55,28 +57,28 @@ flowchart LR
 </div>
 <aside className="translation-bubble">
   <strong>Put simply, this means:</strong>
-  <p>Flex Node joins the machine to AKS. Cilium carries pod traffic between nodes in Region A and Region B.</p>
+  <p>Flex Node joins the machine to AKS. Unbounded connects its Flex pod network to the managed AKS pod network.</p>
 </aside>
 </div>
 
-The same Cilium network also supports the services the workload expects:
+The mixed-CNI network supports the services the workload expects:
 
 | Workload need | What happens |
 | --- | --- |
-| Pod addresses | Cluster-pool IPAM gives each node a block from `10.83.0.0/16`, then Cilium assigns addresses from that block to its pods. |
-| Kubernetes names and services | Flex pods use normal `ClusterFirst` DNS. Cilium's eBPF service handling routes ClusterIP traffic without kube-proxy. |
-| External HTTPS | Cilium forwards Flex pod traffic through the Flex host's normal Azure network path. The lab verifies HTTPS access to Anyscale. |
+| Pod addresses | Azure CNI Overlay assigns AKS pods from `TF_VAR_cilium_pod_cidr`. Unbounded assigns the Flex node a `/24` from `TF_VAR_unbounded_flex_pod_cidr`. |
+| Kubernetes names and services | Flex pods use normal `ClusterFirst` DNS. Unbounded-managed kube-proxy handles ClusterIP traffic on Flex; managed Cilium handles it on AKS. |
+| External HTTPS | Flex pods leave through the Flex host's Azure network path. The lab verifies HTTPS access to Anyscale. |
 
 The Flex host reaches the public AKS API over HTTPS to join the cluster and
-report node state. That control-plane connection is separate from the VXLAN pod
-path. Step 5 checks the Cilium settings, DNS, ClusterIP routing, cross-node pod
-traffic, and external HTTPS with short-lived pods.
+report node state. That control-plane connection is separate from the pod
+tunnel. Step 5 checks CNI ownership, DNS, bilateral ClusterIP routing,
+cross-site pod traffic, and external HTTPS with short-lived pods.
 
 ## Step 1: Check the AKS network profile
 
-The cluster must have no built-in CNI so the installed upstream Cilium release
-can configure both AKS and Flex nodes. Read the live profile before enabling the
-Flex host:
+The AKS-managed nodes must use Azure CNI Overlay powered by Cilium before
+Unbounded adds the separate Flex network. Read the live profile before enabling
+the Flex host:
 
 ```bash
 source .env
@@ -86,26 +88,29 @@ CLUSTER_NAME="aks-${TF_VAR_project}-${TF_VAR_environment}-${TF_VAR_region_short}
 az aks show \
   --resource-group "$RESOURCE_GROUP" \
   --name "$CLUSTER_NAME" \
-  --query 'networkProfile.{plugin:networkPlugin,podCidr:podCidr,serviceCidr:serviceCidr}' \
+  --query 'networkProfile.{plugin:networkPlugin,mode:networkPluginMode,dataPlane:networkDataplane,podCidr:podCidr,serviceCidr:serviceCidr}' \
   -o json
 ```
 
-The foundation prints the Cilium cluster-pool range:
+The foundation prints the managed Azure overlay range:
 
 ```json
 {
-  "plugin": "none",
+  "dataPlane": "cilium",
+  "mode": "overlay",
+  "plugin": "azure",
   "podCidr": "10.83.0.0/16",
   "serviceCidr": "10.100.0.0/16"
 }
 ```
 
 The `podCidr` value must equal `TF_VAR_cilium_pod_cidr` in `.env`. It is the
-range Cilium allocates across both locations.
+managed AKS pod range. `TF_VAR_unbounded_flex_pod_cidr` is the separate Flex
+pod range.
 
 ## Step 2: Check the provisioned Flex host
 
-The upstream AKS Flex Node Cilium lab tests Ubuntu 24.04. Check the selected host
+This lab validates the CPU Flex path on Ubuntu 24.04. Check the selected host
 image and the VM name created in Module 2:
 
 ```bash
@@ -120,8 +125,8 @@ selected VM; Module 5 installs the Kubernetes device plugin that advertises that
 GPU to workloads.
 
 The second command prints a `vm-flex-...` name. The VM does not have secondary
-pod IPs. Cilium assigns worker pod addresses from the Cilium pool after the node
-joins.
+pod IPs. Unbounded assigns worker pod addresses from the Flex pod range after
+the node joins.
 
 ## Step 3: Generate the Flex join configuration
 
@@ -166,20 +171,21 @@ Expected output includes:
 PASS M3-01/M3-02 Flex VM exists and is running
 PASS M3-03/M3-04 Flex node joined and Ready
 PASS M3-05 Flex host runs Ubuntu 24.04
-PASS Unmanaged upstream Cilium cluster-pool IPAM and VXLAN ready
-PASS Cilium agent and Envoy Ready on Flex node <flex-node-name>
+PASS Azure CNI Overlay powered by managed Cilium ready on AKS
+PASS Flex node <flex-node-name> Ready in <region-b>
+PASS Unbounded owns Flex CNI and kube-proxy without replacing managed AKS Cilium
 PASS Flex ClusterFirst DNS resolves Anyscale and Kubernetes service names
 PASS Flex pod HTTPS egress reaches console.azure.anyscale.com
-PASS Upstream Cilium connectivity: AKS and Flex pods exchanged traffic and AKS reached Flex ClusterIP <service-ip>:8080
+PASS Mixed-CNI connectivity: bilateral pod traffic and ClusterIP routing from AKS and Flex
 ```
 
 If the command prints `FAIL` or `ERROR`, use
 the saved result that corresponds to the failed layer. Check
 `flex-host-runtime.json` for VM or join failures, `aks-network-profile.json` and
-`cilium-values-runtime.json` for Cilium configuration failures, and the DNS,
-egress, or route pod logs for the matching traffic failure. Rerun the same Module
-3 check after correcting the problem. Continue to Module 4 after every required
-check reports `PASS`.
+the Unbounded site, node, CNI-file, and TC-filter artifacts for ownership
+failures. Use the DNS, egress, or route pod logs for the matching traffic
+failure. Rerun the same Module 3 check after correcting the problem. Continue to
+Module 4 after every required check reports `PASS`.
 
 ## Success evidence
 
@@ -189,10 +195,11 @@ pod networking or host details later:
 
 | Result | What it shows |
 | --- | --- |
-| `flex-host-runtime.json` | The Flex VM runs the Ubuntu 24.04 host image required by the upstream Cilium scenario and records its kernel version. |
-| `aks-network-profile.json` and `cilium-values-runtime.json` | AKS has no built-in CNI and Cilium uses cluster-pool IPAM, VXLAN, and kube-proxy replacement. |
-| `cilium-flex-pods-runtime.json` | Cilium agent and Envoy run on the Flex node. |
-| DNS, egress, and route pod logs | A Flex pod resolved Kubernetes names, reached HTTPS, and exchanged traffic with an AKS pod. |
+| `flex-host-runtime.json` | The Flex VM runs the validated Ubuntu 24.04 host image and records its kernel version. |
+| `aks-network-profile.json` and `managed-cilium-pods-runtime.json` | AKS uses Azure CNI Overlay powered by managed Cilium, and its agents are ready. |
+| `unbounded-sites-runtime.json`, `unbounded-sitepeering-runtime.json`, and `unbounded-nodes-runtime.json` | Unbounded owns Flex IPAM, advertises both sites' node pod CIDRs, and meshes the sites directly. |
+| `aks-active-cni-files.txt`, `flex-active-cni-files.txt`, and `aks-unbounded0-tc-filters.txt` | Each node has one CNI writer, and Unbounded retains the `unbounded0` TC egress hook on managed nodes. |
+| DNS, egress, and route pod logs | A Flex pod resolved Kubernetes names, reached HTTPS, and exchanged direct and ClusterIP traffic with an AKS pod. |
 
 ## Next step
 

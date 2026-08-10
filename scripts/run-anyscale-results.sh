@@ -151,9 +151,9 @@ check_flex_workload_path() {
   local anyscale_dns_name
 
   anyscale_dns_name="$(lab_gate_anyscale_host_name)"
-  lab_gate_cilium_ready "${ARTIFACT_DIR}"
+  lab_gate_managed_cilium_ready "${ARTIFACT_DIR}"
   lab_gate_flex_node_ready "${ARTIFACT_DIR}"
-  lab_gate_cilium_flex_ready "${ARTIFACT_DIR}"
+  lab_gate_unbounded_flex_ready "${ARTIFACT_DIR}"
   lab_gate_flex_dns_ready "${ARTIFACT_DIR}" "${anyscale_dns_name}"
   lab_gate_flex_https_egress "${ARTIFACT_DIR}" "${anyscale_dns_name}"
   lab_gate_aks_to_flex_line_of_sight "${ARTIFACT_DIR}"

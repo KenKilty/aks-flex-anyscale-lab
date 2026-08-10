@@ -88,8 +88,10 @@ Set `TF_VAR_azure_location` and `TF_VAR_region_short` to the actual Azure name
 and short label for Region A. Set `TF_VAR_flex_region` and
 `TF_VAR_flex_region_short` for Region B. Set the CPU or GPU VM sizes for the path
 available in your Azure environment, and keep
-`TF_VAR_cilium_pod_cidr="10.83.0.0/16"`. The Flex host is enabled by default
-because every lab path uses it.
+`TF_VAR_cilium_pod_cidr="10.83.0.0/16"` for AKS-managed pods and
+`TF_VAR_unbounded_flex_pod_cidr="10.84.0.0/16"` for Flex pods. The ranges must
+not overlap each other, either VNet, or the service CIDR. The Flex host is
+enabled by default because every lab path uses it.
 
 These values are the local environment profile used by every wrapper command:
 
@@ -97,6 +99,7 @@ These values are the local environment profile used by every wrapper command:
 | --- | --- | --- |
 | `TF_VAR_azure_location` and `TF_VAR_region_short` | Region A and the AKS resource names | Module 2 creates AKS; Module 4 checks Anyscale extension availability here. |
 | `TF_VAR_flex_region` and `TF_VAR_flex_region_short` | Region B and the Flex host resource names | Module 2 creates the VNet and Flex VM here; Module 3 joins the VM to AKS. |
+| `TF_VAR_cilium_pod_cidr` and `TF_VAR_unbounded_flex_pod_cidr` | Separate pod address ranges for AKS-managed nodes and Flex nodes | Module 2 configures Azure CNI Overlay; Module 3 verifies Unbounded IPAM and cross-site routing. |
 | `TF_VAR_system_vm_size` and `TF_VAR_cpu_vm_size` | The AKS system and CPU node pools | This step checks their Region A quota before Module 2 creates them. |
 | `TF_VAR_flex_host_vm_size` and `TF_VAR_flex_host_source_image_reference` | The CPU or GPU Flex VM and its host image | Module 2 creates this VM; Module 3 joins it to AKS. |
 | `TF_VAR_anyscale_enabled` | Whether Terraform creates the Anyscale cloud, extension, and Gateway | Keep it `"false"` until Module 4 confirms Region A support. |
@@ -243,8 +246,9 @@ starts one GPU worker. Increase the worker count only when the selected VM
 exposes enough GPUs.
 
 :::caution Complete the environment first
-Wait until the Flex node, Cilium, DNS, and the Anyscale Gateway all pass their
-readiness checks before running the Anyscale workload.
+Wait until managed Cilium, the Flex node's Unbounded network, DNS, and the
+Anyscale Gateway all pass their readiness checks before running the Anyscale
+workload.
 :::
 
 ## Success evidence

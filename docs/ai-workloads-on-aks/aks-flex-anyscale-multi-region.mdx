@@ -67,9 +67,9 @@ names, node pools, and regions) to see exactly where each pod ran.
 
 ```mermaid
 flowchart LR
-  regionA["Region A<br/>AKS cluster<br/>Ray head pod"]
-  network["Peered Azure networks<br/>Cilium carries pod traffic"]
-  regionB["Region B<br/>Flex node<br/>Ray worker pod"]
+  regionA["Region A<br/>AKS cluster and Ray head<br/>Azure CNI Overlay with managed Cilium"]
+  network["Peered Azure networks<br/>Unbounded SitePeering carries pod traffic"]
+  regionB["Region B<br/>Flex node and Ray worker<br/>Unbounded CNI and kube-proxy"]
 
   regionA <--> network <--> regionB
 
@@ -106,13 +106,16 @@ AKS Flex Node is what lets the Linux host in Region B take part in the AKS
 cluster even though it is not part of an AKS managed node pool. It prepares and
 joins that host as a Kubernetes worker, so Kubernetes can place the Ray worker
 pod there just as it places the Ray head pod on an AKS node. Flex Node handles
-the host's connection to the cluster, while Cilium gives pods on both types of
-node a network path to each other.
+the host's connection to the cluster. Azure CNI Overlay powered by managed
+Cilium owns pod networking on AKS nodes, while Unbounded owns CNI and
+kube-proxy on the Flex node. Unbounded SitePeering carries pod traffic between
+the two sites over the peered VNets.
 
 Behind that flow, the Anyscale control plane sends your workload to the Anyscale
 operator in AKS. The operator creates the Ray resources, Kubernetes places the
-pods on the matching nodes, and Cilium carries traffic between them over the
-peered VNets. The workload saves its results in `workload-summary.json`. After
+pods on the matching nodes, and the mixed-CNI path carries traffic between them
+over the peered VNets. The workload saves its results in
+`workload-summary.json`. After
 the job finishes, you check that file alongside the cluster's pod details to
 confirm that the Ray head ran in Region A and the worker ran in Region B.
 

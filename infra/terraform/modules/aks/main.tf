@@ -77,12 +77,14 @@ resource "azurerm_kubernetes_cluster" "this" {
   # node subnet (UDR).
   # Docs: https://learn.microsoft.com/azure/aks/egress-outboundtype
   network_profile {
-    network_plugin    = "none"
-    outbound_type     = "userDefinedRouting"
-    pod_cidr          = var.cilium_pod_cidr
-    service_cidr      = var.service_cidr
-    dns_service_ip    = var.dns_service_ip
-    load_balancer_sku = "standard"
+    network_plugin      = "azure"
+    network_plugin_mode = "overlay"
+    network_data_plane  = "cilium"
+    outbound_type       = "userDefinedRouting"
+    pod_cidr            = var.cilium_pod_cidr
+    service_cidr        = var.service_cidr
+    dns_service_ip      = var.dns_service_ip
+    load_balancer_sku   = "standard"
   }
 
   api_server_access_profile {
