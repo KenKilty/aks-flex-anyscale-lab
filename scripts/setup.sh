@@ -463,7 +463,7 @@ delete_anyscale_gateway() {
   die "Anyscale Gateway service did not release the Terraform-managed public IP"
 }
 
-cleanup_residual_anyscale_platform_resources() {
+cleanup_anyscale_platform_resources() {
   local rg cloud child parent api attempt group_exists show_output
 
   [[ "${TF_VAR_anyscale_enabled:-false}" == "true" ]] || return 0
@@ -478,7 +478,7 @@ cleanup_residual_anyscale_platform_resources() {
   child="/subscriptions/${TF_VAR_azure_subscription_id}/resourceGroups/${rg}/providers/Anyscale.Platform/clouds/${cloud}/cloudResources/default"
   parent="/subscriptions/${TF_VAR_azure_subscription_id}/resourceGroups/${rg}/providers/Anyscale.Platform/clouds/${cloud}"
 
-  printf 'info: cleaning residual Anyscale.Platform resources before destroy retry\n' >&2
+  printf 'info: cleaning Anyscale.Platform resources before infrastructure teardown\n' >&2
   for api in 2026-02-01-preview 2023-04-01-preview; do
     az rest --method delete --url "https://management.azure.com${child}?api-version=${api}" --only-show-errors >/dev/null 2>&1 || true
   done
@@ -1317,12 +1317,13 @@ main() {
     render_tfvars
     terraform_cmd init
     delete_anyscale_gateway
+    cleanup_anyscale_platform_resources
     set +e
     terraform_cmd destroy -auto-approve
     destroy_rc=$?
     set -e
     if [[ "${destroy_rc}" -ne 0 ]]; then
-      cleanup_residual_anyscale_platform_resources
+      cleanup_anyscale_platform_resources
       set +e
       terraform_cmd destroy -auto-approve
       destroy_rc=$?
