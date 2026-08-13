@@ -24,7 +24,6 @@ cd "${ROOT_DIR}"
 KNOWN_UNFIXED_HIGHS=(
   "GHSA-5c6j-r48x-rmvq" # serialize-javascript RCE via RegExp.flags (build-time only, fixedIn: null)
   "GHSA-qj8w-gfj5-8c6v" # serialize-javascript DoS via array-like objects (build-time only, fixedIn: null)
-  "GHSA-w5hq-g745-h8pq" # uuid missing buffer bounds check in v3/v5/v6 (build-time only, only fix requires breaking Docusaurus downgrade)
   "GHSA-w3rx-r6r6-pgpr" # image-size ICNS parser DoS; build-time parser receives only trusted repository images, fixedIn: null
   "GHSA-5p2g-fcmc-qvqq" # image-size JXL/HEIF parser DoS; build-time parser receives only trusted repository images, fixedIn: null
   "GHSA-2v37-7h3g-55p8" # nanoid custom generators loop when size is 0; unreachable because postcss's only call is nanoid(6) at build time, and the named fix 3.3.18 is unpublished while postcss still requires ^3.3.17. Remove once a patched nanoid 3.x ships.
