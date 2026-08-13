@@ -34,9 +34,10 @@ from the Ready nodes selected for each role. It reserves the headroom described
 in Module 5, caps the request at the smoke workload target, and writes the
 resulting compute config under `.cache/anyscale/compute-configs/`. Anyscale then
 accepts the job, the operator creates Kubernetes resources, and the Kubernetes
-scheduler places the Ray pods. CPU mode creates one Flex worker. GPU mode creates
-one fixed worker group for the managed AKS GPU and one for the Flex GPU. Both
-modes use the same sizing code and Unbounded network path.
+[scheduler](https://kubernetes.io/docs/concepts/scheduling-eviction/kube-scheduler/)
+places the Ray pods. CPU mode creates one Flex worker. GPU mode creates one fixed
+worker group for the managed AKS GPU and one for the Flex GPU. Both modes use
+the same sizing code and Unbounded network path.
 
 <!-- Keep this diagram in sync with assets/architecture/03-workload-execution.mmd. -->
 
@@ -58,7 +59,8 @@ sequenceDiagram
   api-->>command: Return capacity for the selected node pools
   command->>command: Reserve headroom and write the compute config
   command->>control: Submit compute config and Ray Job
-  control->>operator: Reconcile the Anyscale workload
+  operator->>control: Poll outbound for pending operations
+  control-->>operator: Return the Anyscale workload operation
   operator->>api: Create Ray cluster and job resources
   api-->>head: Schedule the head pod in Region A
   alt CPU mode
@@ -100,8 +102,8 @@ rank hostnames to those pods.
 ## Step 1: Verify the Flex workload path
 
 Run the workload only after the readiness checks pass. The Flex diagnostic pod
-must use normal `ClusterFirst` DNS, and the Flex node must not carry the broad
-`kubernetes.azure.com/cluster` label.
+must use the normal [`ClusterFirst` DNS policy](https://kubernetes.io/docs/concepts/services-networking/dns-pod-service/#pod-s-dns-policy),
+and the Flex node must not carry the broad `kubernetes.azure.com/cluster` label.
 
 ```bash
 source .env

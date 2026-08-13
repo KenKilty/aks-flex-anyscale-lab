@@ -1,14 +1,17 @@
 flowchart LR
   learner["You<br/>submit a Ray Job"]
-  anyscale["Anyscale<br/>manages the job"]
-  kubernetes["Kubernetes<br/>places the pods"]
+  anyscale["Anyscale control plane<br/>records the job"]
+  operator["Operator in AKS<br/>polls Anyscale outbound"]
+  kubernetes["Kubernetes API and scheduler<br/>create and place the pods"]
   result["You see<br/>job result and pod placement"]
 
-  learner --> anyscale --> kubernetes --> result
+  learner --> anyscale
+  operator -->|polls for pending work| anyscale
+  operator --> kubernetes --> result
 
   classDef person fill:#fef3c7,stroke:#b45309,color:#451a03,font-size:20px
   classDef service fill:#e0f2fe,stroke:#0369a1,color:#082f49,font-size:20px
   classDef result fill:#dcfce7,stroke:#15803d,color:#052e16,font-size:20px
   class learner person
-  class anyscale,kubernetes service
+  class anyscale,operator,kubernetes service
   class result result

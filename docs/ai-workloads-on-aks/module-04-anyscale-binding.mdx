@@ -26,12 +26,16 @@ resource reports `Programmed=True`.
 ## Background: Anyscale on AKS
 
 Anyscale on AKS is available through Azure-native resources and an AKS cluster extension.
-The extension installs the Anyscale operator in the `anyscale-operator` namespace and
-connects it to the Anyscale control plane at `console.azure.anyscale.com`.
+The extension installs the Anyscale operator in the `anyscale-operator`
+[namespace](https://kubernetes.io/docs/concepts/overview/working-with-objects/namespaces/).
+The operator connects outbound to the Anyscale control plane at
+`console.azure.anyscale.com` and polls for pending operations.
 
-When you submit a Ray job, Anyscale places Ray head and worker pods on nodes that
-match the compute config's resource requirements. Because the Flex host is a standard
-Kubernetes node, Anyscale can schedule onto it without workload code changes.
+When you submit a Ray job, the operator creates the Ray resources through the
+Kubernetes API. The Kubernetes scheduler places Ray head and worker pods on
+nodes that match the compute config's resource requirements. Because the Flex
+host is a standard Kubernetes node, the scheduler can place a worker there
+without workload code changes.
 
 :::info Preview feature
 Anyscale on Azure is currently in public preview. If you encounter unexpected
@@ -249,8 +253,10 @@ PASS M4-04 current principal has Anyscale Platform Administrator Role at subscri
 ## Step 5: Verify the Anyscale operator and Gateway
 
 The deployment creates `anyscale-operator/anyscale-gateway` after the operator
-extension connects to the Anyscale cloud. The Gateway must report
-`Programmed=True` before Anyscale can expose Ray services.
+extension connects to the Anyscale cloud. A Kubernetes
+[Gateway](https://kubernetes.io/docs/concepts/services-networking/gateway/)
+represents traffic-handling infrastructure for services. This Gateway must
+report `Programmed=True` before Anyscale can expose Ray services.
 
 **Check the operator and Gateway:** inspect them together, then read the Gateway
 condition directly.

@@ -15,7 +15,8 @@ sequenceDiagram
   api-->>command: Return capacity for the selected node pools
   command->>command: Reserve headroom and write the compute config
   command->>control: Submit compute config and Ray Job
-  control->>operator: Reconcile the Anyscale workload
+  operator->>control: Poll outbound for pending operations
+  control-->>operator: Return the Anyscale workload operation
   operator->>api: Create Ray cluster and job resources
   api-->>head: Schedule the head pod in Region A
   alt CPU mode

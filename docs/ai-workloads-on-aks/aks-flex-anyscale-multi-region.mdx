@@ -15,8 +15,9 @@ tags:
 GPU capacity is often constrained, and useful compute does not always sit beside
 the platform that needs it. In this lab, you bring a second Linux host into the
 same AKS cluster and use it for a distributed AI workload. You will keep your
-job submission in one place while Kubernetes places the Ray head and worker pods
-where the cluster has capacity.
+job submission in one place while the Kubernetes
+[scheduler](https://kubernetes.io/docs/concepts/scheduling-eviction/kube-scheduler/)
+places the Ray head and worker pods where the cluster has capacity.
 
 You will use **AKS Flex Node** to join a Linux host outside the AKS managed node
 pools as a worker node. **Anyscale on Azure** adds managed Ray Jobs, compute
@@ -30,9 +31,12 @@ in Region B. You will compare per-rank training records with Kubernetes
 placement.
 
 This lab creates a repeatable Azure topology. AKS is configured with
-`networkPlugin=none`, and Unbounded provides pod networking for the managed AKS
-nodes and the Flex VM. Module 2 creates a peered Azure VNet for the Flex host,
-then the later modules verify that the workload spans both node pools.
+`networkPlugin=none`, so AKS does not install a Container Network Interface
+([CNI](https://kubernetes.io/docs/concepts/extend-kubernetes/compute-storage-net/network-plugins/))
+plugin. [Unbounded](https://github.com/Azure/unbounded) provides pod networking
+for the managed AKS nodes and the Flex VM. Module 2 creates a peered Azure VNet
+for the Flex host, then the later modules verify that the workload spans both
+node pools.
 
 To run the pattern again, use a new project or environment value in your local
 `.env` profile, then deploy again. The resource group name comes from those
@@ -93,17 +97,20 @@ flowchart LR
 ```mermaid
 flowchart LR
   learner["You<br/>submit a Ray Job"]
-  anyscale["Anyscale<br/>manages the job"]
-  kubernetes["Kubernetes<br/>places the pods"]
+  anyscale["Anyscale control plane<br/>records the job"]
+  operator["Operator in AKS<br/>polls Anyscale outbound"]
+  kubernetes["Kubernetes API and scheduler<br/>create and place the pods"]
   result["You see<br/>job result and pod placement"]
 
-  learner --> anyscale --> kubernetes --> result
+  learner --> anyscale
+  operator -->|polls for pending work| anyscale
+  operator --> kubernetes --> result
 
   classDef person fill:#fef3c7,stroke:#b45309,color:#451a03,font-size:20px
   classDef service fill:#e0f2fe,stroke:#0369a1,color:#082f49,font-size:20px
   classDef result fill:#dcfce7,stroke:#15803d,color:#052e16,font-size:20px
   class learner person
-  class anyscale,kubernetes service
+  class anyscale,operator,kubernetes service
   class result result
 ```
 
@@ -116,8 +123,9 @@ the host's connection to the cluster. The AKS cluster runs with
 nodes and the Flex node, and carries pod traffic between the two regions over the
 peered VNets.
 
-Behind that flow, Anyscale sends your workload to the Anyscale operator running
-in AKS. The operator creates the Ray resources, Kubernetes places the pods on the
+Behind that flow, the Anyscale operator in AKS polls the Anyscale control plane
+over an outbound connection. When it finds pending work, the operator creates
+the Ray resources through the Kubernetes API, the scheduler places the pods on
 matching nodes, and Unbounded carries traffic between them. The workload saves
 its results in `workload-summary.json`. After the job finishes, you check that
 file alongside the cluster's pod details to confirm that the Ray head ran in

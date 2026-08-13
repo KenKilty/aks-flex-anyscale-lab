@@ -27,18 +27,20 @@ Your environment has two distinct compute locations:
 
 | Location | Managed by | Scales how |
 | ---------- | ----------- | ------------ |
-| Region A AKS CPU pool (`cpu`) | AKS cluster autoscaler | Adds nodes from Azure capacity on demand |
+| Region A AKS CPU pool (`cpu`) | [AKS cluster autoscaler](https://learn.microsoft.com/en-us/azure/aks/cluster-autoscaler) | Adds nodes when resource constraints leave a pod unschedulable, within the pool's configured bounds |
 | Region B Flex host | You provisioned and joined it to AKS | Fixed capacity, already `Ready` |
 
 The Flex host does **not** autoscale. It is pre-provisioned and remains fixed
-while this environment exists. Anyscale can place workers on it immediately
-without waiting for a scale event.
+while this environment exists. The Kubernetes scheduler can place workers on it
+immediately without waiting for a scale event.
 
 The VM size sets nominal CPU and memory, but Kubernetes schedules pods against
-the lower allocatable values reported by each node. Allocatable is what remains
-after Azure and AKS reserve capacity for the operating system and cluster
-services. The Anyscale pod also runs helper containers alongside the main one,
-which consume some of that remainder. In Module 6, the workload command reads
+the lower allocatable values reported by each node. AKS
+[resource reservations](https://learn.microsoft.com/en-us/azure/aks/core-aks-concepts#resource-reservations)
+make allocatable capacity lower than the VM's total capacity because the
+operating system and cluster services need CPU and memory. The Anyscale pod also
+runs helper containers alongside the main one, which consume some of that
+remainder. In Module 6, the workload command reads
 every eligible Ready node, uses the smallest allocatable value, reserves `500m`
 CPU and `1Gi` memory for node services and helper containers, and rounds down to
 whole CPUs and GiB. This shared calculation applies to CPU and GPU mode, so
@@ -174,7 +176,8 @@ summary.
 Skip this subsection for the CPU path. If you enabled the GPU path, first confirm
 the Flex host driver and then install the NVIDIA device plugin before running the
 shared readiness checks. The installation script targets the managed GPU pool
-and the Flex node and adds the required taint tolerations.
+and the Flex node and adds the required
+[taint tolerations](https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/).
 
 ```bash
 source .env
@@ -208,7 +211,8 @@ NVIDIA device plugin ready: 1 allocatable GPU in <managed-gpu-pool> and 1 in aks
 ### CPU and GPU paths
 
 Run the readiness checks for the CPU pool bounds, the selected GPU settings, the
-AKS network profile, Flex pod networking, DNS, HTTPS access, pod and ClusterIP
+AKS network profile, Flex pod networking, [`ClusterFirst` DNS](https://kubernetes.io/docs/concepts/services-networking/dns-pod-service/#pod-s-dns-policy),
+HTTPS access, pod and [`ClusterIP` Service](https://kubernetes.io/docs/concepts/services-networking/service/#type-clusterip)
 traffic in both directions, and the Anyscale extension and Gateway:
 
 ```bash

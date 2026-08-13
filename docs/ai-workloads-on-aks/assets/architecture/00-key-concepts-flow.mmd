@@ -1,0 +1,33 @@
+flowchart LR
+  client["Client<br/>Anyscale Console or Anyscale CLI"]
+
+  subgraph controlPlane["Anyscale control plane"]
+    jobManager["Job management<br/>records the DeepSpeed Ray Train Job"]
+  end
+
+  subgraph azureSubscription["Your Azure subscription"]
+    operator["Anyscale operator<br/>polls for pending work"]
+    kubernetesApi["Kubernetes API<br/>accepts Ray resources"]
+    scheduler["Kubernetes scheduler<br/>places the Ray pods"]
+    head["Ray head pod<br/>AKS-managed CPU node"]
+    managedWorker["Ray worker pod<br/>AKS-managed node"]
+    flexWorker["Ray worker pod<br/>Flex node in the second region"]
+
+    operator -->|creates Ray resources| kubernetesApi
+    kubernetesApi --> scheduler
+    scheduler --> head
+    scheduler --> managedWorker
+    scheduler --> flexWorker
+  end
+
+  client -->|submits the Job| jobManager
+  operator -->|polls outbound for pending work| jobManager
+
+  classDef clientStyle fill:#fef3c7,stroke:#b45309,color:#451a03,font-size:16px
+  classDef controlStyle fill:#e0f2fe,stroke:#0369a1,color:#082f49,font-size:16px
+  classDef computeStyle fill:#dcfce7,stroke:#15803d,color:#052e16,font-size:16px
+  class client clientStyle
+  class jobManager,operator,kubernetesApi,scheduler controlStyle
+  class head,managedWorker,flexWorker computeStyle
+  style controlPlane fill:#f0f9ff,stroke:#0284c7,stroke-width:2px,color:#082f49
+  style azureSubscription fill:#f0fdf4,stroke:#16a34a,stroke-width:2px,color:#052e16

@@ -39,10 +39,13 @@ Region A (AKS home region)             Region B (Flex host region)
 Terraform creates both sides of the VNet peering before it creates the Flex VM,
 so the host has a cross-region network path when you join it to AKS. It also
 checks the live AKS network profile and waits for the cluster to report `Ready`
-before it starts the Flex VM. The cluster uses `networkPlugin=none`, and
-Terraform adds Unbounded to provide pod networking for the managed AKS nodes.
-Terraform also gives the Flex VM's managed identity permission to register its
-machine with AKS. Module 3 extends the pod network to the Flex node, using
+before it starts the Flex VM. The cluster uses `networkPlugin=none`, which means
+AKS does not install a Container Network Interface
+([CNI](https://kubernetes.io/docs/concepts/extend-kubernetes/compute-storage-net/network-plugins/))
+plugin. Terraform installs [Unbounded](https://github.com/Azure/unbounded) as
+the CNI and multi-site network for the managed AKS nodes. Terraform also gives
+the Flex VM's managed identity permission to register its machine with AKS.
+Module 3 extends the pod network to the Flex node, using
 `TF_VAR_cilium_pod_cidr` for managed AKS pods and
 `TF_VAR_unbounded_flex_pod_cidr` for Flex pods.
 

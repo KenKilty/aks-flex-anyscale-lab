@@ -11,8 +11,8 @@ tags:
 
 Module 2 created the Linux VM in **Region B**. In this module, you join that
 host to the AKS cluster in **Region A** as an AKS Flex node. The AKS cluster uses
-`networkPlugin=none`, and Unbounded owns the networking path on both the managed
-AKS nodes and the Flex node.
+`networkPlugin=none`, and [Unbounded](https://github.com/Azure/unbounded) owns
+the networking path on both the managed AKS nodes and the Flex node.
 
 ## What You Will Do
 
@@ -27,9 +27,10 @@ and Flex before you connect Anyscale.
 AKS Flex Node prepares the external machine and joins it to AKS as a worker. It
 does not provide the pod network. Unbounded manages the pod networking path for
 both the managed AKS nodes and the Flex node. It allocates Flex pod addresses,
-runs kube-proxy only on Flex, and links the managed AKS and Flex sites over the
-peered VNets. Unbounded discovers the managed AKS node pod `/24`s and the Flex
-pod range, then carries pod traffic between the nodes' private IP addresses.
+runs [kube-proxy](https://kubernetes.io/docs/reference/command-line-tools-reference/kube-proxy/)
+only on Flex, and links the managed AKS and Flex sites over the peered VNets.
+Unbounded discovers the managed AKS node pod `/24`s and the Flex pod range, then
+carries pod traffic between the nodes' private IP addresses.
 
 <!-- Keep this diagram in sync with assets/architecture/02-flex-networking.mmd. -->
 
@@ -62,7 +63,7 @@ This pod network supports the services the workload expects:
 | Workload need | What happens |
 | --- | --- |
 | Pod addresses | Unbounded manages pod addressing for the AKS-hosted and Flex-hosted workers, with the Flex node assigned a `/24` from `TF_VAR_unbounded_flex_pod_cidr`. |
-| Kubernetes names and services | Flex pods use normal `ClusterFirst` DNS. Unbounded-managed kube-proxy handles ClusterIP traffic on Flex, while the managed AKS path uses the same Unbounded ownership model. |
+| Kubernetes names and services | Flex pods use the normal [`ClusterFirst` DNS policy](https://kubernetes.io/docs/concepts/services-networking/dns-pod-service/#pod-s-dns-policy). Unbounded-managed kube-proxy handles [`ClusterIP` Service](https://kubernetes.io/docs/concepts/services-networking/service/#type-clusterip) traffic on Flex, while the managed AKS path uses the same Unbounded ownership model. |
 | External HTTPS | Flex pods leave through the Flex host's Azure network path. The lab verifies HTTPS access to Anyscale. |
 
 The Flex host reaches the public AKS API over HTTPS to join the cluster and
@@ -157,9 +158,10 @@ and starts AKS Flex Node so the machine joins your cluster. It then applies the
 labels this lab uses to target the node, adds a taint, and approves the node's
 certificate request so the cluster trusts it.
 
-A taint marks the node as reserved. Ordinary pods will not land on it unless they
-explicitly tolerate that mark, which keeps unrelated workloads off the machine you
-provisioned for this lab.
+A [taint](https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/)
+with the `NoSchedule` effect marks the node as reserved. Ordinary pods will not
+land on it unless they have a matching toleration, which keeps unrelated
+workloads off the machine you provisioned for this lab.
 
 On a newly created Ubuntu VM, the command waits for cloud-init and the package
 manager before it installs the Flex components. A short pause at this point is
