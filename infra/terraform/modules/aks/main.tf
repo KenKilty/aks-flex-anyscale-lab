@@ -73,18 +73,15 @@ resource "azurerm_kubernetes_cluster" "this" {
     azure_rbac_enabled = true
   }
 
-  # Force all egress through the Azure Firewall via the route table on the
-  # node subnet (UDR).
-  # Docs: https://learn.microsoft.com/azure/aks/egress-outboundtype
+  # This lab uses a no-CNI AKS cluster and relies on Unbounded for the pod
+  # network on managed nodes and the Flex node. AKS-managed Cilium assumes an
+  # Azure CNI managed node model and is not used for this flow.
   network_profile {
-    network_plugin      = "azure"
-    network_plugin_mode = "overlay"
-    network_data_plane  = "cilium"
-    outbound_type       = "userDefinedRouting"
-    pod_cidr            = var.cilium_pod_cidr
-    service_cidr        = var.service_cidr
-    dns_service_ip      = var.dns_service_ip
-    load_balancer_sku   = "standard"
+    network_plugin    = "none"
+    outbound_type     = "userDefinedRouting"
+    service_cidr      = var.service_cidr
+    dns_service_ip    = var.dns_service_ip
+    load_balancer_sku = "standard"
   }
 
   api_server_access_profile {

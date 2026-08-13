@@ -84,6 +84,11 @@ variable "source_image_reference" {
   })
 }
 
+variable "gpu_driver_enabled" {
+  type    = bool
+  default = false
+}
+
 variable "boot_diagnostics_enabled" {
   type    = bool
   default = true

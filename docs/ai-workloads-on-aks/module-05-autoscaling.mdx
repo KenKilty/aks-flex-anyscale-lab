@@ -1,7 +1,7 @@
 ---
 title: "Module 5: Review Scaling and Readiness"
 description: Confirm AKS autoscaling, Flex networking, Anyscale availability, and GPU readiness when selected before running the workload.
-sidebar_position: 6
+sidebar_position: 7
 sidebar_label: "Module 5: Scaling and Readiness"
 tags:
   - aks
@@ -10,16 +10,16 @@ tags:
 ---
 
 Before you submit the workload, confirm that every part of its path is healthy.
-You will check the CPU scale profile, mixed-CNI service routing, Flex DNS, and
-the Anyscale Gateway API path without starting a Ray job.
+You will check how the CPU pool scales, how services route between AKS and Flex,
+Flex DNS, and the Anyscale Gateway without starting a Ray job.
 
 ## What You Will Do
 
-You will set quota-safe bounds for the home-region CPU node pool and separate
-that autoscaling behavior from the fixed Flex host capacity. Then you will rerun
-the managed Cilium, Unbounded, DNS, HTTPS egress, and Anyscale Gateway checks so
-the workload starts from a healthy cluster state. If you enabled the GPU path,
-you will also confirm that the Flex host exposes allocatable `nvidia.com/gpu`.
+You will review the scaling bounds on the Region A CPU node pool and see how they
+differ from the fixed Flex host capacity. Then you will rerun the network, DNS,
+HTTPS, and Anyscale Gateway checks so the workload starts from a healthy cluster
+state. If you enabled the GPU path, you will install the NVIDIA device plugin and
+confirm that both GPU nodes report an allocatable `nvidia.com/gpu`.
 
 ## Understanding the capacity model
 
@@ -30,8 +30,34 @@ Your environment has two distinct compute locations:
 | Region A AKS CPU pool (`cpu`) | AKS cluster autoscaler | Adds nodes from Azure capacity on demand |
 | Region B Flex host | You provisioned and joined it to AKS | Fixed capacity, already `Ready` |
 
-The Flex host does **not** autoscale. It is pre-provisioned and permanently
-joined. Anyscale can place workers on it immediately without waiting for a scale event.
+The Flex host does **not** autoscale. It is pre-provisioned and remains fixed
+while this environment exists. Anyscale can place workers on it immediately
+without waiting for a scale event.
+
+The VM size sets nominal CPU and memory, but Kubernetes schedules pods against
+the lower allocatable values reported by each node. Allocatable is what remains
+after Azure and AKS reserve capacity for the operating system and cluster
+services. The Anyscale pod also runs helper containers alongside the main one,
+which consume some of that remainder. In Module 6, the workload command reads
+every eligible Ready node, uses the smallest allocatable value, reserves `500m`
+CPU and `1Gi` memory for node services and helper containers, and rounds down to
+whole CPUs and GiB. This shared calculation applies to CPU and GPU mode, so
+changing a supported VM size does not require a compute-config edit.
+
+The smoke workload caps each derived request at its useful target instead of
+claiming all capacity on a larger VM:
+
+| Role | CPU target | Memory target | Minimum after headroom |
+| --- | --- | --- | --- |
+| Ray head, both paths | 2 | `8Gi` | 1 CPU and `4Gi` |
+| Flex CPU worker | 2 | `8Gi` | 1 CPU and `4Gi` |
+| Managed and Flex GPU workers | 4 | `16Gi` | 1 CPU and `8Gi` |
+
+If the live capacity falls below a minimum, the workload command stops before it
+submits an Anyscale Job. The optional
+`ANYSCALE_RESULTS_NODE_CPU_HEADROOM_MILLICORES` and
+`ANYSCALE_RESULTS_NODE_MEMORY_HEADROOM_GIB` values in `.env` change the reserve,
+not the selected VM size or workload target.
 
 :::warning Flex capacity remains allocated
 The AKS CPU pool can scale within its configured bounds. The Flex VM stays
@@ -93,15 +119,32 @@ from a CPU-only host, changing the Flex VM size or image will replace that host.
 Start with a new environment when you want to switch paths without replacing an
 existing VM.
 
-Review the GPU values you selected in Module 1:
+Review the GPU values you selected in Module 1 for both node domains:
 
 ```bash
-grep -E '^(TF_VAR_flex_host_vm_size|TF_VAR_flex_host_source_image_reference|ANYSCALE_FLEX_GPU_ENABLED|ANYSCALE_RESULTS_GPU_[A-Z_]+)=' .env
+grep -E '^(TF_VAR_gpu_pool_configs|TF_VAR_flex_host_vm_size|TF_VAR_flex_host_source_image_reference|ANYSCALE_FLEX_GPU_ENABLED|ANYSCALE_RESULTS_GPU_PRODUCT_LABEL)=' .env
 ```
 
-Enable this path only after you confirm quota and capacity for the selected GPU
-VM size in the Flex region. GPU workers must run on the Flex node. If they land
-on an AKS managed GPU node pool, the placement is incorrect.
+Enable this path only after you confirm quota for one managed GPU VM in Region A
+and one GPU Flex VM in Region B. Keep both GPU counts fixed at one. Module 6
+requires one Ray Train worker in each domain.
+
+### CPU and GPU paths: Review live allocatable capacity
+
+This table shows the values that Kubernetes can schedule after Azure and AKS
+reserve resources on each selected VM. Module 6 reads these same fields when it
+creates the Anyscale compute config.
+
+```bash
+kubectl get nodes \
+  -o custom-columns='NODE:.metadata.name,POOL:.metadata.labels.agentpool,READY:.status.conditions[?(@.type=="Ready")].status,CPU:.status.allocatable.cpu,MEMORY:.status.allocatable.memory,GPU:.status.allocatable.nvidia\.com/gpu'
+```
+
+Every node used by your selected path should show `True` under `READY`. The CPU
+and memory columns should reflect the live node SKU but can be lower than the
+VM specification. Before Step 4 installs the NVIDIA device plugin, the GPU
+column can be blank. After the installation completes, the managed GPU node and
+Flex node must each show `1` under `GPU`.
 
 ## Step 3: Apply the capacity settings
 
@@ -130,10 +173,11 @@ summary.
 
 Skip this subsection for the CPU path. If you enabled the GPU path, first confirm
 the Flex host driver and then install the NVIDIA device plugin before running the
-shared readiness checks. The installation script targets the Flex node and adds
-the required taint tolerations.
+shared readiness checks. The installation script targets the managed GPU pool
+and the Flex node and adds the required taint tolerations.
 
 ```bash
+source .env
 ssh -i "$SSH_PRIVATE_KEY_PATH" \
   "${TF_VAR_flex_host_admin_username}@$(./scripts/anyscale-aks.sh output -raw flex_host_public_ip)" \
   'nvidia-smi --query-gpu=name,driver_version --format=csv,noheader'
@@ -146,8 +190,8 @@ Example output:
 ```
 
 The installation script labels the Flex node with
-`nvidia.com/gpu.product` from `ANYSCALE_RESULTS_GPU_PRODUCT_LABEL`, matching the
-accelerator selected for the Anyscale GPU worker.
+`nvidia.com/gpu.product` from `ANYSCALE_RESULTS_GPU_PRODUCT_LABEL`. Terraform
+sets the managed pool's product label from `TF_VAR_gpu_pool_configs`.
 
 ```bash
 ./scripts/install-nvidia-device-plugin.sh
@@ -158,14 +202,14 @@ Expected output:
 ```text
 daemonset.apps/nvidia-device-plugin-daemonset configured
 daemon set "nvidia-device-plugin-daemonset" successfully rolled out
-NVIDIA device plugin ready: <gpu-count> allocatable GPU(s) in pool aksflexnodes
+NVIDIA device plugin ready: 1 allocatable GPU in <managed-gpu-pool> and 1 in aksflexnodes
 ```
 
 ### CPU and GPU paths
 
-Run the readiness checks for the CPU scale profile, selected GPU settings,
-managed Cilium, Unbounded ownership on Flex, DNS, HTTPS access, bilateral pod
-and ClusterIP traffic, and the Anyscale extension and Gateway:
+Run the readiness checks for the CPU pool bounds, the selected GPU settings, the
+AKS network profile, Flex pod networking, DNS, HTTPS access, pod and ClusterIP
+traffic in both directions, and the Anyscale extension and Gateway:
 
 ```bash
 ./scripts/validate-lab.sh m5
@@ -176,12 +220,12 @@ Expected output:
 ```text
 PASS M5-01 CPU node pool autoscaling configured
 SKIP M5-02 GPU path disabled in current env profile
-PASS Azure CNI Overlay powered by managed Cilium ready on AKS
+PASS AKS no-CNI path is active for the Unbounded lab flow
 PASS Flex node <flex-node-name> Ready in <region-b>
-PASS Unbounded owns Flex CNI and kube-proxy without replacing managed AKS Cilium
+PASS Unbounded owns the no-CNI AKS and Flex networking path
 PASS Flex ClusterFirst DNS resolves Anyscale and Kubernetes service names
 PASS Flex pod HTTPS egress reaches console.azure.anyscale.com
-PASS Mixed-CNI connectivity: bilateral pod traffic and ClusterIP routing from AKS and Flex
+PASS Unbounded connectivity: bilateral pod traffic and ClusterIP routing from AKS and Flex
 PASS Anyscale extension and operator pods ready
 PASS Gateway anyscale-operator/anyscale-gateway programmed at <gateway-address>
 ```
@@ -189,11 +233,11 @@ PASS Gateway anyscale-operator/anyscale-gateway programmed at <gateway-address>
 The command writes pod logs and Kubernetes JSON under
 `.cache/lab-validation/m5-flex-network/`. If a check fails, use that directory first;
 it contains the short-lived diagnostic pod output before cleanup. A node or
-CNI ownership failure points to the saved node, network profile, Unbounded site,
-CNI-file, and TC-filter records. A DNS, HTTPS egress, or cross-node traffic
-failure points to the matching diagnostic pod log. Stop before submitting a
-workload, correct the failed layer, and rerun `./scripts/validate-lab.sh m5`
-until every required check reports `PASS`.
+pod-network failure points to the saved node, network profile, and Unbounded site
+records. A DNS, HTTPS egress, or cross-node traffic failure points to the
+matching diagnostic pod log. Stop before submitting a workload, correct the
+problem, and rerun `./scripts/validate-lab.sh m5` until every required check
+reports `PASS`.
 
 ## Step 5: Inspect Anyscale service health
 
@@ -230,7 +274,7 @@ gateway.gateway.networking.k8s.io/anyscale-gateway   approuting-istio   <gateway
 
 :::warning Resolve failed checks before continuing
 Do not submit the workload if any check above fails. Ray services need healthy
-mixed-CNI routing, ClusterFirst DNS, and an available Anyscale Gateway.
+Unbounded routing, ClusterFirst DNS, and an available Anyscale Gateway.
 :::
 
 ## Step 6: Verify that no workload pods remain on Flex
@@ -257,8 +301,8 @@ kube-system   nvidia-device-plugin-daemonset-abcde   1/1   Running   <flex-node-
 
 Before submission, the CPU path should show the Unbounded node and Flex
 kube-proxy system pods, while the GPU path should also show the NVIDIA device
-plugin. Managed Cilium must not run on the Flex node. Any
-application or prior Ray workload pod is leftover from an earlier run and should
+plugin. No AKS-managed networking daemon set should run on the Flex node. Any
+application or prior Ray workload pod is left over from an earlier run and should
 finish or be removed before you continue.
 
 ## Success evidence
@@ -266,7 +310,8 @@ finish or be removed before you continue.
 You can move on when `./scripts/validate-lab.sh m5` prints `PASS` for the
 CPU scale profile, Flex node readiness, Flex DNS, Flex HTTPS egress, AKS-to-Flex
 pod reachability, and Anyscale Gateway health. If the GPU path is enabled, the
-same command should also report allocatable `nvidia.com/gpu` on `aksflexnodes`.
+same command must also report allocatable `nvidia.com/gpu` on the managed GPU
+pool and on `aksflexnodes`.
 
 ## Next step
 

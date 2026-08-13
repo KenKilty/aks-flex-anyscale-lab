@@ -33,19 +33,23 @@ resolve_gpu_product_label() {
 }
 
 main() {
-  local gpu_allocatable gpu_pool_name gpu_product_label target_pool
+  local aks_gpu_allocatable flex_gpu_allocatable gpu_pool_name gpu_product_label
 
   need_cmd jq
   need_cmd kubectl
   source_env
 
-  target_pool="${AKS_FLEX_AGENT_POOL_NAME}"
-  if [[ "${ANYSCALE_RESULTS_GPU_TARGET:-${ANYSCALE_PROOF_GPU_TARGET:-flex}}" == "aks" ]]; then
-    [[ "${TF_VAR_gpu_pool_configs}" != "{}" ]] || die "AKS GPU target requested but GPU pool config is disabled in ${ENV_FILE}"
-    gpu_pool_name="$(resolve_gpu_pool_name)"
-    [[ -n "${gpu_pool_name}" ]] || die "unable to determine GPU pool name from TF_VAR_gpu_pool_configs"
-    target_pool="${gpu_pool_name}"
-  fi
+  [[ "$(jq 'length' <<<"${TF_VAR_gpu_pool_configs}")" -eq 1 ]] || die "dual GPU path requires exactly one AKS GPU pool in ${ENV_FILE}"
+  gpu_pool_name="$(resolve_gpu_pool_name)"
+  [[ -n "${gpu_pool_name}" ]] || die "unable to determine GPU pool name from TF_VAR_gpu_pool_configs"
+  gpu_product_label="$(resolve_gpu_product_label)"
+  [[ -n "${gpu_product_label}" ]] || die "dual GPU path requires ANYSCALE_RESULTS_GPU_PRODUCT_LABEL in ${ENV_FILE}"
+
+  kubectl label nodes -l "agentpool=${AKS_FLEX_AGENT_POOL_NAME}" \
+    "kubernetes.azure.com/agentpool=${AKS_FLEX_AGENT_POOL_NAME}" \
+    "topology.kubernetes.io/region=${TF_VAR_flex_region}" \
+    "nvidia.com/gpu.product=${gpu_product_label}" \
+    --overwrite >/dev/null
 
   kubectl apply -f "https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/${NVIDIA_DEVICE_PLUGIN_VERSION}/deployments/static/nvidia-device-plugin.yml"
 
@@ -54,8 +58,17 @@ main() {
 spec:
   template:
     spec:
-      nodeSelector:
-        agentpool: ${target_pool}
+      nodeSelector: null
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: agentpool
+                    operator: In
+                    values:
+                      - ${gpu_pool_name}
+                      - ${AKS_FLEX_AGENT_POOL_NAME}
       tolerations:
         - key: aks-flex-node
           operator: Equal
@@ -76,25 +89,19 @@ PATCH
   )"
 
   kubectl -n kube-system rollout status ds/nvidia-device-plugin-daemonset --timeout=5m
-  gpu_allocatable="0"
+  aks_gpu_allocatable="0"
+  flex_gpu_allocatable="0"
   for _ in {1..30}; do
-    gpu_allocatable="$(kubectl get nodes -l "agentpool=${target_pool}" -o json | jq '[.items[].status.allocatable["nvidia.com/gpu"]? // empty | tonumber] | add // 0')"
-    [[ "${gpu_allocatable}" -ge 1 ]] && break
+    aks_gpu_allocatable="$(kubectl get nodes -l "agentpool=${gpu_pool_name}" -o json | jq '[.items[].status.allocatable["nvidia.com/gpu"]? // empty | tonumber] | add // 0')"
+    flex_gpu_allocatable="$(kubectl get nodes -l "agentpool=${AKS_FLEX_AGENT_POOL_NAME}" -o json | jq '[.items[].status.allocatable["nvidia.com/gpu"]? // empty | tonumber] | add // 0')"
+    [[ "${aks_gpu_allocatable}" -ge 1 && "${flex_gpu_allocatable}" -ge 1 ]] && break
     sleep 10
   done
-  [[ "${gpu_allocatable}" -ge 1 ]] || die "GPU target pool ${target_pool} has no allocatable nvidia.com/gpu after device-plugin rollout"
+  [[ "${aks_gpu_allocatable}" -eq 1 ]] || die "managed AKS GPU pool ${gpu_pool_name} must expose exactly one allocatable GPU; found ${aks_gpu_allocatable}"
+  [[ "${flex_gpu_allocatable}" -eq 1 ]] || die "Flex GPU pool ${AKS_FLEX_AGENT_POOL_NAME} must expose exactly one allocatable GPU; found ${flex_gpu_allocatable}"
 
-  if [[ "${ANYSCALE_RESULTS_GPU_TARGET:-${ANYSCALE_PROOF_GPU_TARGET:-flex}}" != "aks" ]]; then
-    gpu_product_label="$(resolve_gpu_product_label)"
-    [[ -n "${gpu_product_label}" ]] || die "Flex GPU target requires ANYSCALE_RESULTS_GPU_PRODUCT_LABEL in ${ENV_FILE}"
-    kubectl label nodes -l "agentpool=${target_pool}" \
-      "kubernetes.azure.com/agentpool=${target_pool}" \
-      "topology.kubernetes.io/region=${TF_VAR_flex_region}" \
-      "nvidia.com/gpu.product=${gpu_product_label}" \
-      --overwrite >/dev/null
-  fi
-
-  printf 'NVIDIA device plugin ready: %s allocatable GPU(s) in pool %s\n' "${gpu_allocatable}" "${target_pool}"
+  printf 'NVIDIA device plugin ready: 1 allocatable GPU in %s and 1 in %s\n' \
+    "${gpu_pool_name}" "${AKS_FLEX_AGENT_POOL_NAME}"
 }
 
 main "$@"

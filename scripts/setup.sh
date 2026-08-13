@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC2154,SC2089,SC2090
+# shellcheck disable=SC1091,SC2154,SC2089,SC2090
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -10,6 +10,12 @@ CACHE_DIR="${ROOT_DIR}/.cache"
 FLEX_CACHE_DIR="${CACHE_DIR}/flex"
 ANYSCALE_VENV_DIR="${ROOT_DIR}/.venv"
 ANYSCALE_AZURE_HOST="https://console.azure.anyscale.com"
+TIMEOUT_LIB="${ROOT_DIR}/scripts/lib/timeout.sh"
+ANYSCALE_CLOUD_ID=""
+ANYSCALE_CLOUD_REF=""
+
+# shellcheck source=./lib/timeout.sh
+source "${TIMEOUT_LIB}"
 
 die() {
   printf 'error: %s\n' "$*" >&2
@@ -139,6 +145,7 @@ ensure_defaults() {
   [[ -n "${TF_VAR_flex_host_user_assigned_identity_ids:-}" ]] || TF_VAR_flex_host_user_assigned_identity_ids="[]"
   [[ -n "${TF_VAR_flex_host_os_disk_size_gb:-}" ]] || TF_VAR_flex_host_os_disk_size_gb="256"
   [[ -n "${TF_VAR_flex_host_source_image_reference:-}" ]] || TF_VAR_flex_host_source_image_reference='{"publisher":"Canonical","offer":"ubuntu-24_04-lts","sku":"server","version":"latest"}'
+  grep -q 'ubuntu-24_04-lts' <<<"${TF_VAR_flex_host_source_image_reference}" || die "Flex host image must remain Ubuntu 24.04 to match the upstream AKS Flex Node guidance. Update TF_VAR_flex_host_source_image_reference in .env."
   [[ -n "${TF_VAR_cilium_pod_cidr:-}" ]] || TF_VAR_cilium_pod_cidr="10.83.0.0/16"
   [[ -n "${TF_VAR_unbounded_flex_pod_cidr:-}" ]] || TF_VAR_unbounded_flex_pod_cidr="10.84.0.0/16"
 
@@ -418,110 +425,236 @@ terraform_cmd() {
   (cd "${TERRAFORM_DIR}" && terraform "$@")
 }
 
-delete_anyscale_gateway() {
-  local rg cluster namespace gateway_name service_name attempt
+resolve_anyscale_cloud() {
+  local cloud_name expected_ref json_file match_count raw_file rg
 
-  [[ "${TF_VAR_anyscale_enabled:-false}" == "true" ]] || return 0
-  [[ -z "${TF_VAR_anyscale_gateway_hostname:-}" ]] || return 0
+  [[ "${TF_VAR_anyscale_enabled:-false}" == "true" ]] || return 1
+  [[ -x "${ANYSCALE_VENV_DIR}/bin/anyscale" ]] || die "missing Anyscale CLI; run ./scripts/anyscale-aks.sh bootstrap"
+  [[ -z "${ANYSCALE_HOST:-}" || "${ANYSCALE_HOST}" == "${ANYSCALE_AZURE_HOST}" ]] ||
+    die "ANYSCALE_HOST must be ${ANYSCALE_AZURE_HOST}"
+  export ANYSCALE_HOST="${ANYSCALE_AZURE_HOST}"
 
   rg="$(resource_group_name)"
-  cluster="$(aks_cluster_name)"
-  namespace="${TF_VAR_anyscale_operator_namespace:-anyscale-operator}"
-  gateway_name="${TF_VAR_anyscale_gateway_name:-anyscale-gateway}"
+  cloud_name="${TF_VAR_project}-${TF_VAR_environment}-${TF_VAR_region_short}"
+  expected_ref="/subscriptions/${TF_VAR_azure_subscription_id}/resourcegroups/${rg}/providers/anyscale.platform/clouds/${cloud_name}"
+  raw_file="${CACHE_DIR}/anyscale-clouds.raw"
+  json_file="${CACHE_DIR}/anyscale-clouds.json"
+  mkdir -p "${CACHE_DIR}"
 
-  [[ "$(az aks show --resource-group "${rg}" --name "${cluster}" --query provisioningState -o tsv --only-show-errors 2>/dev/null || true)" == "Succeeded" ]] || return 0
+  "${ANYSCALE_VENV_DIR}/bin/anyscale" cloud list --json --no-interactive --max-items 100 >"${raw_file}" 2>/dev/null ||
+    die "unable to list Anyscale clouds at ${ANYSCALE_HOST}; run ANYSCALE_HOST=${ANYSCALE_AZURE_HOST} .venv/bin/anyscale login"
+  awk 'BEGIN{started=0} /^\[/ {started=1} started {print}' "${raw_file}" |
+    awk '/^Fetched [0-9]+ clouds\.$/{exit} {print}' >"${json_file}"
+  jq -e 'type == "array"' "${json_file}" >/dev/null || die "Anyscale cloud list did not return a JSON array"
 
-  printf 'info: deleting Anyscale Gateway before Terraform releases its static public IP\n' >&2
-  az aks get-credentials \
-    --resource-group "${rg}" \
-    --name "${cluster}" \
-    --overwrite-existing \
-    --only-show-errors >/dev/null
-
-  kubectl get namespace "${namespace}" >/dev/null 2>&1 || return 0
-  kubectl delete gateway "${gateway_name}" \
-    --namespace "${namespace}" \
-    --ignore-not-found \
-    --wait=true
-
-  for ((attempt = 1; attempt <= 60; attempt++)); do
-    service_name="$(kubectl get svc \
-      --namespace "${namespace}" \
-      --selector "gateway.networking.k8s.io/gateway-name=${gateway_name}" \
-      --output name 2>/dev/null || true)"
-    if [[ -z "${service_name}" ]]; then
-      printf 'info: Anyscale Gateway service released the Terraform-managed public IP\n' >&2
-      return 0
-    fi
-    sleep 5
-  done
-
-  kubectl get svc \
-    --namespace "${namespace}" \
-    --selector "gateway.networking.k8s.io/gateway-name=${gateway_name}" \
-    --output wide >&2
-  die "Anyscale Gateway service did not release the Terraform-managed public IP"
+  match_count="$(jq --arg expected "${expected_ref}" '[.[] | select((.name | ascii_downcase) == ($expected | ascii_downcase))] | length' "${json_file}")"
+  [[ "${match_count}" -eq 1 ]] || return 1
+  ANYSCALE_CLOUD_REF="$(jq -r --arg expected "${expected_ref}" '.[] | select((.name | ascii_downcase) == ($expected | ascii_downcase)) | .name' "${json_file}")"
+  ANYSCALE_CLOUD_ID="$(jq -r --arg expected "${expected_ref}" '.[] | select((.name | ascii_downcase) == ($expected | ascii_downcase)) | .id' "${json_file}")"
+  [[ -n "${ANYSCALE_CLOUD_REF}" && -n "${ANYSCALE_CLOUD_ID}" ]]
 }
 
-cleanup_anyscale_platform_resources() {
-  local rg cloud child parent api attempt group_exists show_output
+verify_anyscale_cloud_once() {
+  local cloud_id="$1" kubeconfig="$2"
+
+  printf '%s\n' "${TF_VAR_anyscale_operator_namespace}" |
+    env KUBECONFIG="${kubeconfig}" \
+      "${ANYSCALE_VENV_DIR}/bin/anyscale" cloud verify --id "${cloud_id}" --strict --yes
+}
+
+verify_anyscale_cloud() {
+  local attempt verify_kubeconfig="${CACHE_DIR}/anyscale-cloud-verify.kubeconfig"
+  local verify_log="${CACHE_DIR}/anyscale-cloud-verify.log"
 
   [[ "${TF_VAR_anyscale_enabled:-false}" == "true" ]] || return 0
 
+  rm -f "${verify_kubeconfig}"
+  az aks get-credentials \
+    --resource-group "$(resource_group_name)" \
+    --name "$(aks_cluster_name)" \
+    --file "${verify_kubeconfig}" \
+    --overwrite-existing \
+    --only-show-errors >/dev/null || {
+    rm -f "${verify_kubeconfig}"
+    die "unable to create an isolated kubeconfig for Anyscale cloud verification"
+  }
+  kubelogin convert-kubeconfig --login azurecli --kubeconfig "${verify_kubeconfig}" >/dev/null || {
+    rm -f "${verify_kubeconfig}"
+    die "unable to convert the isolated kubeconfig for Azure CLI authentication"
+  }
+
+  for ((attempt = 1; attempt <= 4; attempt++)); do
+    if resolve_anyscale_cloud &&
+      run_with_timeout "${ANYSCALE_CLOUD_VERIFY_TIMEOUT_SECONDS:-60}" \
+        verify_anyscale_cloud_once "${ANYSCALE_CLOUD_ID}" "${verify_kubeconfig}" >"${verify_log}" 2>&1 &&
+      ! grep -Eq 'FAILED|Failed to verify cloud resource' "${verify_log}"; then
+      rm -f "${verify_kubeconfig}"
+      printf 'info: Anyscale cloud %s passed strict verification\n' "${ANYSCALE_CLOUD_ID}" >&2
+      return 0
+    fi
+    printf 'info: waiting for Anyscale cloud verification (%s/4)\n' "${attempt}" >&2
+    ((attempt < 4)) && sleep 10
+  done
+
+  [[ -f "${verify_log}" ]] && cat "${verify_log}" >&2
+  rm -f "${verify_kubeconfig}"
+  die "the exact Anyscale cloud for $(resource_group_name) did not pass strict verification within 5 minutes"
+}
+
+drain_anyscale_jobs() {
+  local active_json active_count attempt cloud_name job_id parent rg terminated_file
+
+  [[ "${TF_VAR_anyscale_enabled:-false}" == "true" ]] || return 0
   rg="$(resource_group_name)"
-  if ! group_exists="$(az group exists --name "${rg}" --only-show-errors 2>/dev/null)"; then
-    die "unable to check resource group ${rg} before Anyscale.Platform cleanup"
+  cloud_name="${TF_VAR_project}-${TF_VAR_environment}-${TF_VAR_region_short}"
+  parent="/subscriptions/${TF_VAR_azure_subscription_id}/resourceGroups/${rg}/providers/Anyscale.Platform/clouds/${cloud_name}"
+
+  if ! resolve_anyscale_cloud; then
+    if az resource show --ids "${parent}" --api-version 2026-02-01-preview --only-show-errors >/dev/null 2>&1; then
+      die "Azure cloud ${parent} exists but its exact Anyscale control-plane record is unavailable; stop before teardown to avoid orphaning workloads"
+    fi
+    printf 'warning: no exact Anyscale control-plane cloud found for the absent Azure cloud %s\n' "${parent}" >&2
+    return 0
   fi
-  [[ "${group_exists}" == "true" ]] || return 0
 
-  cloud="${TF_VAR_project}-${TF_VAR_environment}-${TF_VAR_region_short}"
-  child="/subscriptions/${TF_VAR_azure_subscription_id}/resourceGroups/${rg}/providers/Anyscale.Platform/clouds/${cloud}/cloudResources/default"
-  parent="/subscriptions/${TF_VAR_azure_subscription_id}/resourceGroups/${rg}/providers/Anyscale.Platform/clouds/${cloud}"
-
-  printf 'info: cleaning Anyscale.Platform resources before infrastructure teardown\n' >&2
-  for api in 2026-02-01-preview 2023-04-01-preview; do
-    az rest --method delete --url "https://management.azure.com${child}?api-version=${api}" --only-show-errors >/dev/null 2>&1 || true
-  done
-
-  for ((attempt = 1; attempt <= 60; attempt++)); do
-    if ! group_exists="$(az group exists --name "${rg}" --only-show-errors 2>/dev/null)"; then
-      printf 'warning: unable to check resource group deletion on attempt %s/60\n' "${attempt}" >&2
-    elif [[ "${group_exists}" == "false" ]]; then
-      printf 'info: Anyscale.Platform resources are absent\n' >&2
-      return 0
-    elif show_output="$(az rest --method get --url "https://management.azure.com${child}?api-version=2026-02-01-preview" --only-show-errors 2>&1)"; then
-      :
-    elif grep -Eq 'ResourceNotFound|ParentResourceNotFound|ResourceGroupNotFound|could not be found' <<<"${show_output}"; then
-      break
-    else
-      printf 'warning: unable to check Anyscale.Platform cloud resource deletion on attempt %s/60: %s\n' "${attempt}" "${show_output}" >&2
-    fi
-    ((attempt < 60)) && sleep 5
-  done
-  ((attempt <= 60)) || die "Anyscale.Platform cloud resource did not delete within 5 minutes"
-
-  for api in 2026-02-01-preview 2023-04-01-preview; do
-    az rest --method delete --url "https://management.azure.com${parent}?api-version=${api}" --only-show-errors >/dev/null 2>&1 || true
-  done
+  active_json="${CACHE_DIR}/anyscale-active-jobs.json"
+  terminated_file="${CACHE_DIR}/anyscale-terminating-job-ids.txt"
+  : >"${terminated_file}"
+  "${ANYSCALE_VENV_DIR}/bin/anyscale" job list \
+    --v2 \
+    --cloud "${ANYSCALE_CLOUD_REF}" \
+    --include-all-users \
+    --state STARTING \
+    --state RUNNING \
+    --json \
+    --no-interactive \
+    --max-items 100 >"${active_json}" || die "unable to list active jobs for ${ANYSCALE_CLOUD_REF}"
+  jq -e 'type == "array"' "${active_json}" >/dev/null || die "Anyscale active job list did not return a JSON array"
 
   for ((attempt = 1; attempt <= 60; attempt++)); do
-    if ! group_exists="$(az group exists --name "${rg}" --only-show-errors 2>/dev/null)"; then
-      printf 'warning: unable to check resource group deletion on attempt %s/60\n' "${attempt}" >&2
-    elif [[ "${group_exists}" == "false" ]]; then
-      printf 'info: residual Anyscale.Platform resources are absent\n' >&2
+    "${ANYSCALE_VENV_DIR}/bin/anyscale" job list \
+      --v2 \
+      --cloud "${ANYSCALE_CLOUD_REF}" \
+      --include-all-users \
+      --state STARTING \
+      --state RUNNING \
+      --json \
+      --no-interactive \
+      --max-items 100 >"${active_json}" || die "unable to confirm Anyscale Job termination for ${ANYSCALE_CLOUD_REF}"
+    active_count="$(jq 'length' "${active_json}")"
+    if [[ "${active_count}" -eq 0 ]]; then
+      printf 'info: no active Anyscale Jobs remain on %s\n' "${ANYSCALE_CLOUD_ID}" >&2
       return 0
-    elif show_output="$(az resource show --ids "${parent}" --api-version 2026-02-01-preview --only-show-errors 2>&1)"; then
-      :
-    elif grep -Eq 'ResourceNotFound|ParentResourceNotFound|ResourceGroupNotFound|could not be found' <<<"${show_output}"; then
-      printf 'info: residual Anyscale.Platform resources are absent\n' >&2
-      return 0
-    else
-      printf 'warning: unable to check Anyscale.Platform cloud deletion on attempt %s/60: %s\n' "${attempt}" "${show_output}" >&2
     fi
+
+    while IFS= read -r job_id; do
+      [[ -n "${job_id}" ]] || continue
+      grep -qxF "${job_id}" "${terminated_file}" && continue
+      printf 'info: terminating active Anyscale Job %s before cloud teardown\n' "${job_id}" >&2
+      "${ANYSCALE_VENV_DIR}/bin/anyscale" job terminate --id "${job_id}"
+      printf '%s\n' "${job_id}" >>"${terminated_file}"
+    done < <(jq -r '.[].id // empty' "${active_json}")
+
     ((attempt < 60)) && sleep 5
   done
 
-  die "residual Anyscale.Platform cloud did not delete within 5 minutes"
+  die "Anyscale Jobs remained active on ${ANYSCALE_CLOUD_REF} after 5 minutes; stop before deleting the Azure cloud"
+}
+
+assert_no_active_anyscale_services_or_workspaces() {
+  local active_count services_json workspaces_json
+
+  [[ "${TF_VAR_anyscale_enabled:-false}" == "true" ]] || return 0
+  [[ -n "${ANYSCALE_CLOUD_ID}" && -n "${ANYSCALE_CLOUD_REF}" ]] || return 0
+  services_json="${CACHE_DIR}/anyscale-active-services.json"
+  workspaces_json="${CACHE_DIR}/anyscale-active-workspaces.json"
+
+  "${ANYSCALE_VENV_DIR}/bin/anyscale" service list \
+    --cloud "${ANYSCALE_CLOUD_REF}" \
+    --state STARTING \
+    --state RUNNING \
+    --state UPDATING \
+    --state ROLLING_OUT \
+    --state ROLLING_BACK \
+    --state UNHEALTHY \
+    --state TERMINATING \
+    --state SYSTEM_FAILURE \
+    --state USER_ERROR_FAILURE \
+    --json \
+    --no-interactive \
+    --max-items 100 >"${services_json}" || die "unable to list active services for ${ANYSCALE_CLOUD_REF}"
+  jq -e 'type == "array"' "${services_json}" >/dev/null || die "Anyscale active service list did not return a JSON array"
+  active_count="$(jq 'length' "${services_json}")"
+  if [[ "${active_count}" -ne 0 ]]; then
+    jq -r '.[] | "active service: \(.id // "unknown-id") \(.name // "unknown-name") [\(.state // "unknown-state")]"' "${services_json}" >&2
+    die "active Anyscale Services remain on ${ANYSCALE_CLOUD_REF}; terminate them explicitly before destroying this lab"
+  fi
+
+  "${ANYSCALE_VENV_DIR}/bin/anyscale" workspace_v2 list \
+    --cloud "${ANYSCALE_CLOUD_REF}" \
+    --state STARTING \
+    --state UPDATING \
+    --state RUNNING \
+    --state TERMINATING \
+    --state ERRORED \
+    --state UNKNOWN \
+    --json \
+    --no-interactive \
+    --max-items 100 >"${workspaces_json}" || die "unable to list active workspaces for ${ANYSCALE_CLOUD_REF}"
+  jq -e 'type == "array"' "${workspaces_json}" >/dev/null || die "Anyscale active workspace list did not return a JSON array"
+  active_count="$(jq 'length' "${workspaces_json}")"
+  if [[ "${active_count}" -ne 0 ]]; then
+    jq -r '.[] | "active workspace: \(.id // "unknown-id") \(.name // "unknown-name") [\(.state // "unknown-state")]"' "${workspaces_json}" >&2
+    die "active Anyscale Workspaces remain on ${ANYSCALE_CLOUD_REF}; terminate them explicitly before destroying this lab"
+  fi
+
+  printf 'info: no active Anyscale Services or Workspaces remain on %s\n' "${ANYSCALE_CLOUD_ID}" >&2
+}
+
+terminate_anyscale_system_cluster() {
+  local terminate_log="${CACHE_DIR}/anyscale-system-cluster-terminate.log"
+
+  [[ "${TF_VAR_anyscale_enabled:-false}" == "true" ]] || return 0
+  [[ -n "${ANYSCALE_CLOUD_ID}" ]] || return 0
+
+  if run_with_timeout "${ANYSCALE_SYSTEM_CLUSTER_TERMINATE_TIMEOUT_SECONDS:-600}" \
+    "${ANYSCALE_VENV_DIR}/bin/anyscale" cloud terminate-system-cluster \
+    --id "${ANYSCALE_CLOUD_ID}" \
+    --wait >"${terminate_log}" 2>&1; then
+    printf 'info: Anyscale system cluster is terminated for %s\n' "${ANYSCALE_CLOUD_ID}" >&2
+    return 0
+  fi
+
+  cat "${terminate_log}" >&2
+  die "unable to confirm system-cluster termination for ${ANYSCALE_CLOUD_ID}; stop before deleting the Azure cloud"
+}
+
+archive_anyscale_compute_configs() {
+  local config_id config_name configs_json
+
+  [[ "${TF_VAR_anyscale_enabled:-false}" == "true" ]] || return 0
+  [[ -n "${ANYSCALE_CLOUD_ID}" && -n "${ANYSCALE_CLOUD_REF}" ]] || return 0
+  configs_json="${CACHE_DIR}/anyscale-compute-configs.json"
+
+  if ! "${ANYSCALE_VENV_DIR}/bin/anyscale" compute-config list \
+    --json \
+    --max-items 100 \
+    --cloud-name "${ANYSCALE_CLOUD_REF}" >"${configs_json}"; then
+    printf 'warning: unable to list compute configs for %s; stale config metadata may require Anyscale support cleanup\n' "${ANYSCALE_CLOUD_ID}" >&2
+    return 0
+  fi
+
+  while IFS=$'\t' read -r config_id config_name; do
+    [[ -n "${config_id}" ]] || continue
+    case "${config_name}" in
+    cpu-home | gpu-dual-home)
+      printf 'info: archiving lab compute config %s (%s)\n' "${config_name}" "${config_id}" >&2
+      if ! "${ANYSCALE_VENV_DIR}/bin/anyscale" compute-config archive --id "${config_id}"; then
+        printf 'warning: unable to archive compute config %s; ask Anyscale support to retire it if it remains after cloud deletion\n' "${config_id}" >&2
+      fi
+      ;;
+    esac
+  done < <(jq -r '.results[]? | [.id, .name] | @tsv' "${configs_json}")
 }
 
 destroy_verified_complete() {
@@ -545,65 +678,40 @@ destroy_verified_complete() {
   return 1
 }
 
-ensure_anyscale_gateway() {
-  local rg cluster namespace gateway_name gateway_class
-
-  [[ "${TF_VAR_anyscale_enabled:-false}" == "true" ]] || return 0
-
-  need_cmd az
-  need_cmd kubectl
-
-  rg="rg-${TF_VAR_project}-${TF_VAR_environment}-${TF_VAR_region_short}"
-  cluster="$(aks_cluster_name)"
-  namespace="${TF_VAR_anyscale_operator_namespace}"
-  gateway_name="${TF_VAR_anyscale_gateway_name:-anyscale-gateway}"
-  gateway_class="approuting-istio"
-
-  az aks get-credentials --resource-group "${rg}" --name "${cluster}" --overwrite-existing --only-show-errors >/dev/null
-  kubectl get gatewayclass "${gateway_class}" >/dev/null
-  kubectl get namespace "${namespace}" >/dev/null
-
-  if ! kubectl get gateway "${gateway_name}" -n "${namespace}" >/dev/null 2>&1; then
-    kubectl apply -f - <<EOF
-apiVersion: gateway.networking.k8s.io/v1
-kind: Gateway
-metadata:
-  name: ${gateway_name}
-  namespace: ${namespace}
-spec:
-  gatewayClassName: ${gateway_class}
-  listeners:
-    - name: http
-      port: 80
-      protocol: HTTP
-      allowedRoutes:
-        namespaces:
-          from: All
-EOF
-  fi
-  kubectl -n "${namespace}" wait "gateway/${gateway_name}" --for=condition=Programmed --timeout=5m
-}
-
 import_untracked_anyscale_resources() {
-  local deployment_address deployment_name extension_address extension_id
+  local cloud_address cloud_id cloud_resource_address cloud_resource_id
+  local deployment_address deployment_id deployment_name extension_address extension_id
 
   [[ "${TF_VAR_anyscale_enabled:-false}" == "true" ]] || return 0
 
   deployment_address='azapi_resource.anyscale_platform[0]'
   if ! terraform_cmd state show "${deployment_address}" >/dev/null 2>&1; then
     deployment_name="dep-anyscale-${TF_VAR_project}-${TF_VAR_environment}-${TF_VAR_region_short}"
-    if az deployment group show \
+    if deployment_id="$(az deployment group show \
       --resource-group "$(resource_group_name)" \
       --name "${deployment_name}" \
       --query id \
       -o tsv \
-      --only-show-errors >/dev/null 2>&1; then
-      printf 'info: deleting untracked Anyscale ARM deployment record after an interrupted create; deployed resources remain\n' >&2
-      az deployment group delete \
-        --resource-group "$(resource_group_name)" \
-        --name "${deployment_name}" \
-        --only-show-errors
+      --only-show-errors 2>/dev/null)"; then
+      printf 'info: importing existing Anyscale ARM deployment record into Terraform state\n' >&2
+      terraform_cmd import "${deployment_address}" "${deployment_id}"
     fi
+  fi
+
+  cloud_id="/subscriptions/${TF_VAR_azure_subscription_id}/resourceGroups/$(resource_group_name)/providers/Anyscale.Platform/clouds/${TF_VAR_project}-${TF_VAR_environment}-${TF_VAR_region_short}"
+  cloud_address='azapi_resource.anyscale_cloud[0]'
+  if ! terraform_cmd state show "${cloud_address}" >/dev/null 2>&1 &&
+    az resource show --ids "${cloud_id}" --api-version 2026-02-01-preview --only-show-errors >/dev/null 2>&1; then
+    printf 'info: importing existing Anyscale.Platform cloud into Terraform state\n' >&2
+    terraform_cmd import "${cloud_address}" "${cloud_id}"
+  fi
+
+  cloud_resource_id="${cloud_id}/cloudResources/default"
+  cloud_resource_address='azapi_resource.anyscale_cloud_resource[0]'
+  if ! terraform_cmd state show "${cloud_resource_address}" >/dev/null 2>&1 &&
+    az resource show --ids "${cloud_resource_id}" --api-version 2026-02-01-preview --only-show-errors >/dev/null 2>&1; then
+    printf 'info: importing existing Anyscale.Platform cloud resource into Terraform state\n' >&2
+    terraform_cmd import "${cloud_resource_address}" "${cloud_resource_id}"
   fi
 
   extension_address='azurerm_kubernetes_cluster_extension.anyscale_operator[0]'
@@ -614,6 +722,39 @@ import_untracked_anyscale_resources() {
     printf 'info: importing existing Anyscale extension after an interrupted create\n' >&2
     terraform_cmd import "${extension_address}" "${extension_id}"
   fi
+}
+
+reuse_existing_anyscale_default_admin_assignment() {
+  local assignment_address assignment_config assignment_id enabled principal_id principal_type role_name scope
+
+  [[ "${TF_VAR_anyscale_enabled:-false}" == "true" ]] || return 0
+  assignment_address='azurerm_role_assignment.anyscale_platform["current_principal_admin"]'
+  terraform_cmd state show "${assignment_address}" >/dev/null 2>&1 && return 0
+
+  if [[ -n "${TF_VAR_anyscale_platform_default_admin_assignment:-}" ]]; then
+    assignment_config="${TF_VAR_anyscale_platform_default_admin_assignment}"
+  else
+    assignment_config='{}'
+  fi
+  enabled="$(jq -r '.enabled // true' <<<"${assignment_config}")"
+  principal_type="$(jq -r '.principal_type // "User"' <<<"${assignment_config}")"
+  role_name="$(jq -r '.role_definition_name // "Anyscale Platform Administrator"' <<<"${assignment_config}")"
+  scope="$(jq -r '.scope // "subscription"' <<<"${assignment_config}")"
+  [[ "${enabled}" == "true" && "${principal_type}" == "User" && "${scope}" == "subscription" ]] || return 0
+  [[ "${role_name}" == "Anyscale Platform Administrator" || "${role_name}" == "Anyscale Platform Administrator Role" ]] || return 0
+
+  principal_id="$(az ad signed-in-user show --query id -o tsv --only-show-errors)"
+  assignment_id="$(az role assignment list \
+    --assignee "${principal_id}" \
+    --scope "/subscriptions/${TF_VAR_azure_subscription_id}" \
+    --query "[?scope=='/subscriptions/${TF_VAR_azure_subscription_id}' && (roleDefinitionName=='Anyscale Platform Administrator' || roleDefinitionName=='Anyscale Platform Administrator Role')].id | [0]" \
+    -o tsv \
+    --only-show-errors)"
+  [[ -n "${assignment_id}" ]] || return 0
+
+  export TF_VAR_anyscale_platform_default_admin_assignment
+  TF_VAR_anyscale_platform_default_admin_assignment="$(jq -c '.enabled = false' <<<"${assignment_config}")"
+  printf 'info: reusing existing Anyscale Platform Administrator assignment %s; Terraform will not adopt or delete shared access\n' "${assignment_id}" >&2
 }
 
 download_flex_helper() {
@@ -695,7 +836,7 @@ approve_flex_daemon_csrs() {
 }
 
 require_supported_flex_networking() {
-  local cluster_rg="$1" cluster_name="$2" network_profile network_plugin network_plugin_mode network_data_plane
+  local cluster_rg="$1" cluster_name="$2" network_profile network_plugin
 
   network_profile="$(az aks show \
     --resource-group "${cluster_rg}" \
@@ -704,11 +845,9 @@ require_supported_flex_networking() {
     --output json \
     --only-show-errors)"
   network_plugin="$(jq -r '.networkPlugin // empty' <<<"${network_profile}")"
-  network_plugin_mode="$(jq -r '.networkPluginMode // empty' <<<"${network_profile}")"
-  network_data_plane="$(jq -r '.networkDataplane // .networkDataPlane // empty' <<<"${network_profile}")"
 
-  [[ "${network_plugin}" == "azure" && "${network_plugin_mode}" == "overlay" && "${network_data_plane}" == "cilium" ]] ||
-    die "This mixed-CNI experiment requires Azure CNI Overlay powered by Cilium on AKS-managed nodes. Observed plugin=${network_plugin:-unset} mode=${network_plugin_mode:-unset} dataplane=${network_data_plane:-unset}."
+  [[ "${network_plugin}" == "none" ]] ||
+    die "This no-CNI Unbounded experiment requires AKS networkPlugin=none. Observed plugin=${network_plugin:-unset}."
 }
 
 generate_flex_config() {
@@ -886,14 +1025,16 @@ EOF
 }
 
 bootstrap_flex_host() {
-  local config_path config_release_tag flex_checksums_url flex_release_url host_ip admin_user flex_node_name cluster_rg cluster_name release_tag secondary_ip_count ssh_opts
+  local config_path config_release_tag flex_archive_path flex_checksums_path flex_checksums_url flex_release_url host_ip admin_user flex_node_name cluster_rg cluster_name release_tag secondary_ip_count ssh_opts
 
   need_cmd az
+  need_cmd curl
   need_cmd kubectl
   need_cmd kubelogin
   need_cmd jq
   need_cmd openssl
   need_cmd scp
+  need_cmd shasum
   need_cmd ssh
   need_cmd terraform
   source_env
@@ -929,8 +1070,24 @@ bootstrap_flex_host() {
   )
   flex_release_url="https://github.com/Azure/AKSFlexNode/releases/download/${release_tag}/aks-flex-node-linux-amd64.tar.gz"
   flex_checksums_url="https://github.com/Azure/AKSFlexNode/releases/download/${release_tag}/checksums.txt"
+  flex_archive_path="${FLEX_CACHE_DIR}/aks-flex-node-linux-amd64.tar.gz"
+  flex_checksums_path="${FLEX_CACHE_DIR}/checksums.txt"
 
-  scp "${ssh_opts[@]}" "${config_path}" "${admin_user}@${host_ip}:/tmp/aks-flex-node-config.json"
+  curl --connect-timeout 30 --retry 5 --retry-all-errors -fsSLo \
+    "${flex_archive_path}" "${flex_release_url}"
+  curl --connect-timeout 30 --retry 5 --retry-all-errors -fsSLo \
+    "${flex_checksums_path}" "${flex_checksums_url}"
+  (
+    cd "${FLEX_CACHE_DIR}"
+    grep -E '^[[:xdigit:]]{64}  aks-flex-node-linux-amd64\.tar\.gz$' checksums.txt |
+      shasum -a 256 -c -
+  )
+
+  scp "${ssh_opts[@]}" \
+    "${config_path}" \
+    "${flex_archive_path}" \
+    "${flex_checksums_path}" \
+    "${admin_user}@${host_ip}:/tmp/"
   printf 'AKS Flex Node stable release: %s\n' "${release_tag}"
 
   if ssh "${ssh_opts[@]}" "${admin_user}@${host_ip}" 'sudo systemctl is-active --quiet aks-flex-node-agent'; then
@@ -962,10 +1119,10 @@ REMOTE_FLEX_REFRESH
   else
     # shellcheck disable=SC2029
     ssh "${ssh_opts[@]}" "${admin_user}@${host_ip}" \
-      "AKS_FLEX_NODE_RELEASE_TAG='${release_tag}' FLEX_CHECKSUMS_URL='${flex_checksums_url}' FLEX_RELEASE_URL='${flex_release_url}' bash -s" <<'REMOTE_FLEX_BOOTSTRAP'
+      "AKS_FLEX_NODE_RELEASE_TAG='${release_tag}' FLEX_GPU_ENABLED='${ANYSCALE_FLEX_GPU_ENABLED:-false}' bash -s" <<'REMOTE_FLEX_BOOTSTRAP'
 set -euo pipefail
 
-for command in curl grep sha256sum tar; do
+    for command in grep sha256sum tar; do
   command -v "${command}" >/dev/null 2>&1 || {
     echo "missing required command on Flex host: ${command}" >&2
     exit 1
@@ -974,8 +1131,8 @@ done
 
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "${TMP_DIR}"' EXIT
-curl -fsSLo "${TMP_DIR}/aks-flex-node-linux-amd64.tar.gz" "${FLEX_RELEASE_URL}"
-curl -fsSLo "${TMP_DIR}/checksums.txt" "${FLEX_CHECKSUMS_URL}"
+mv /tmp/aks-flex-node-linux-amd64.tar.gz "${TMP_DIR}/"
+mv /tmp/checksums.txt "${TMP_DIR}/"
 (
   cd "${TMP_DIR}"
   grep -E '^[[:xdigit:]]{64}  aks-flex-node-linux-amd64\.tar\.gz$' checksums.txt |
@@ -984,6 +1141,40 @@ curl -fsSLo "${TMP_DIR}/checksums.txt" "${FLEX_CHECKSUMS_URL}"
 tar -xzf "${TMP_DIR}/aks-flex-node-linux-amd64.tar.gz" -C "${TMP_DIR}"
 
 printf 'AKS Flex Node stable release: %s\n' "${AKS_FLEX_NODE_RELEASE_TAG}"
+
+if [[ "${FLEX_GPU_ENABLED}" == "true" ]]; then
+  for attempt in $(seq 1 120); do
+    modules_ready=true
+    for module in nvidia nvidia_modeset nvidia_uvm nvidia_drm; do
+      sudo modprobe "${module}" >/dev/null 2>&1 || modules_ready=false
+      grep -q "^${module} " /proc/modules || modules_ready=false
+    done
+    if [[ "${modules_ready}" == "true" ]] && command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi >/dev/null 2>&1; then
+      break
+    fi
+    sleep 5
+  done
+  [[ "${modules_ready}" == "true" ]] && command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi >/dev/null 2>&1 || {
+    echo 'NVIDIA driver did not become ready within 10 minutes' >&2
+    exit 1
+  }
+fi
+
+if command -v cloud-init >/dev/null 2>&1; then
+  sudo cloud-init status --wait
+fi
+
+for attempt in $(seq 1 120); do
+  if ! sudo fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock >/dev/null 2>&1; then
+    break
+  fi
+  sleep 5
+done
+
+if sudo fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock >/dev/null 2>&1; then
+  echo 'Timed out waiting for the Flex host package manager lock' >&2
+  exit 1
+fi
 
 sudo install -d -m 0755 /etc/aks-flex-node
 sudo install -m 0600 /tmp/aks-flex-node-config.json /etc/aks-flex-node/config.json
@@ -1308,23 +1499,26 @@ main() {
     sync_azure_context
     render_tfvars
     terraform_cmd init
+    reuse_existing_anyscale_default_admin_assignment
     terraform_cmd validate
     terraform_cmd plan -out=tfplan
     ;;
   apply)
     need_cmd az
     need_cmd jq
+    need_cmd kubelogin
     source_env
     sync_azure_context
     render_tfvars
     terraform_cmd init
     terraform_cmd validate
     import_untracked_anyscale_resources
+    reuse_existing_anyscale_default_admin_assignment
     if [[ "${ANYSCALE_RUN_TERRAFORM_TESTS:-false}" == "true" ]]; then
       terraform_cmd test
     fi
     terraform_cmd apply -auto-approve
-    ensure_anyscale_gateway
+    verify_anyscale_cloud
     ;;
   destroy)
     need_cmd az
@@ -1334,22 +1528,19 @@ main() {
     sync_azure_context
     render_tfvars
     terraform_cmd init
-    delete_anyscale_gateway
-    cleanup_anyscale_platform_resources
+    import_untracked_anyscale_resources
+    reuse_existing_anyscale_default_admin_assignment
+    drain_anyscale_jobs
+    assert_no_active_anyscale_services_or_workspaces
+    terminate_anyscale_system_cluster
+    archive_anyscale_compute_configs
     set +e
     terraform_cmd destroy -auto-approve
     destroy_rc=$?
     set -e
     if [[ "${destroy_rc}" -ne 0 ]]; then
-      cleanup_anyscale_platform_resources
-      set +e
-      terraform_cmd destroy -auto-approve
-      destroy_rc=$?
-      set -e
-      if [[ "${destroy_rc}" -ne 0 ]]; then
-        destroy_verified_complete && return 0
-        return "${destroy_rc}"
-      fi
+      destroy_verified_complete && return 0
+      return "${destroy_rc}"
     fi
     ;;
   output)

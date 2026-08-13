@@ -65,8 +65,11 @@ run_with_timeout() {
     return $?
   fi
 
-  run_with_timeout_bash_watchdog "${timeout_seconds}" "$@"
-  exit_code=$?
+  if run_with_timeout_bash_watchdog "${timeout_seconds}" "$@"; then
+    exit_code=0
+  else
+    exit_code=$?
+  fi
 
   if [[ "${exit_code}" -eq 124 ]]; then
     format_timeout_command_display command_display "$@"

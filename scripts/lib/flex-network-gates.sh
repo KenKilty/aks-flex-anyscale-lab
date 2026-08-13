@@ -116,16 +116,15 @@ lab_gate_managed_cilium_ready() {
   local artifact_dir="$1"
   local resource_group="${RESOURCE_GROUP_NAME:-${RG:-}}"
   local cluster_name="${CLUSTER_NAME:-${CLUSTER:-}}"
-  local cilium_pod_cidr="${TF_VAR_cilium_pod_cidr:-}"
-  local network_profile_json cilium_pods_json network_plugin network_plugin_mode network_data_plane pod_cidr helm_release_count
+  local network_profile_json network_plugin pod_cidr
+  local cilium_pods_json cilium_count
 
   lab_gate_need_cmd az
   lab_gate_need_cmd jq
   lab_gate_need_cmd kubectl
   lab_gate_artifact_dir "${artifact_dir}"
-  [[ -n "${resource_group}" ]] || lab_gate_die "resource group name is not set for Cilium validation"
-  [[ -n "${cluster_name}" ]] || lab_gate_die "cluster name is not set for Cilium validation"
-  [[ -n "${cilium_pod_cidr}" ]] || lab_gate_die "TF_VAR_cilium_pod_cidr is not set for Cilium validation"
+  [[ -n "${resource_group}" ]] || lab_gate_die "resource group name is not set for no-CNI validation"
+  [[ -n "${cluster_name}" ]] || lab_gate_die "cluster name is not set for no-CNI validation"
 
   network_profile_json="${artifact_dir}/aks-network-profile.json"
   cilium_pods_json="${artifact_dir}/managed-cilium-pods-runtime.json"
@@ -137,22 +136,13 @@ lab_gate_managed_cilium_ready() {
     --only-show-errors >"${network_profile_json}"
 
   network_plugin="$(jq -r '.networkPlugin // empty' "${network_profile_json}")"
-  network_plugin_mode="$(jq -r '.networkPluginMode // empty' "${network_profile_json}")"
-  network_data_plane="$(jq -r '.networkDataplane // .networkDataPlane // empty' "${network_profile_json}")"
   pod_cidr="$(jq -r '.podCidr // empty' "${network_profile_json}")"
-  [[ "${network_plugin}" == "azure" ]] || lab_gate_die "AKS networkPlugin must be azure; found ${network_plugin:-unset}"
-  [[ "${network_plugin_mode}" == "overlay" ]] || lab_gate_die "AKS networkPluginMode must be overlay; found ${network_plugin_mode:-unset}"
-  [[ "${network_data_plane}" == "cilium" ]] || lab_gate_die "AKS networkDataplane must be cilium; found ${network_data_plane:-unset}"
-  [[ "${pod_cidr}" == "${cilium_pod_cidr}" ]] || lab_gate_die "AKS podCidr must match TF_VAR_cilium_pod_cidr=${cilium_pod_cidr}; found ${pod_cidr:-unset}"
-
-  helm_release_count="$(kubectl -n kube-system get secrets -l owner=helm,name=cilium -o json | jq '.items | length')"
-  [[ "${helm_release_count}" -eq 0 ]] || lab_gate_die "found a Helm-owned Cilium release over AKS-managed Cilium"
-
-  kubectl -n kube-system rollout status daemonset/cilium --timeout=10m >/dev/null
-  kubectl -n kube-system get pods -l k8s-app=cilium -o json >"${cilium_pods_json}"
-  [[ "$(jq '[.items[] | select(.status.phase == "Running") | select([.status.containerStatuses[]? | select(.ready != true)] | length == 0)] | length' "${cilium_pods_json}")" -ge 1 ]] ||
-    lab_gate_die "AKS-managed Cilium has no Ready agents (pods: ${cilium_pods_json})"
-  lab_gate_pass "Azure CNI Overlay powered by managed Cilium ready on AKS"
+  [[ "${network_plugin}" == "none" ]] || lab_gate_die "AKS networkPlugin must be none; found ${network_plugin:-unset}"
+  kubectl -n kube-system get pods -l k8s-app=cilium -o json >"${cilium_pods_json}" 2>/dev/null || true
+  cilium_count="$(jq -r '.items | length // 0' "${cilium_pods_json}")"
+  [[ "${cilium_count}" -eq 0 ]] || lab_gate_die "AKS-managed Cilium is not allowed in the no-CNI lab flow; observed ${cilium_count} daemonset pod(s) (pods: ${cilium_pods_json})"
+  [[ -z "${pod_cidr}" ]] || lab_gate_pass "AKS no-CNI network profile is active; podCidr=${pod_cidr:-unset}"
+  lab_gate_pass "AKS no-CNI path is active for the Unbounded lab flow"
 }
 
 lab_gate_flex_node_ready() {
@@ -236,20 +226,19 @@ lab_gate_unbounded_flex_ready() {
 
   kubectl get sites aks-managed flex -o json >"${sites_json}"
   jq -e --arg aks_pod_cidr "${TF_VAR_cilium_pod_cidr}" --arg flex_pod_cidr "${flex_pod_cidr}" '
-    ([.items[] | select(.metadata.name == "aks-managed")][0] | .spec.manageCniPlugin == false and .spec.podCidrAssignments[0].assignmentEnabled == false and (.spec.podCidrAssignments[0].cidrBlocks | index($aks_pod_cidr) == null)) and
+    ([.items[] | select(.metadata.name == "aks-managed")][0] | .spec.manageCniPlugin == true and .spec.podCidrAssignments[0].assignmentEnabled == true and (.spec.podCidrAssignments[0].cidrBlocks | index($aks_pod_cidr) != null)) and
     ([.items[] | select(.metadata.name == "flex")][0] | .spec.manageCniPlugin == true and .spec.podCidrAssignments[0].assignmentEnabled == true and (.spec.podCidrAssignments[0].cidrBlocks | index($flex_pod_cidr) != null))
-  ' "${sites_json}" >/dev/null || lab_gate_die "Unbounded Site CNI ownership or pod CIDRs do not match the mixed-CNI contract (sites: ${sites_json})"
+  ' "${sites_json}" >/dev/null || lab_gate_die "Unbounded Site CNI ownership or pod CIDRs do not match the no-CNI contract (sites: ${sites_json})"
 
   kubectl get sitepeering aks-flex-private-l3 -o json >"${peering_json}"
   jq -e '.spec.meshNodes == true and .spec.tunnelProtocol == "Auto" and (.spec.sites | index("aks-managed") != null) and (.spec.sites | index("flex") != null)' "${peering_json}" >/dev/null ||
     lab_gate_die "Unbounded SitePeering does not mesh aks-managed and flex with tunnelProtocol=Auto (peering: ${peering_json})"
 
   kubectl get nodes -o json >"${nodes_json}"
-  kubectl -n unbounded-system rollout status daemonset/unbounded-aks-overlay-metadata --timeout=5m >/dev/null
   managed_node_cidrs="$(jq -r '[.items[] | select(.metadata.labels["kubernetes.azure.com/managedby"] != null or .metadata.labels["kubernetes.azure.com/cluster"] != null) | .spec.podCIDR // ""] | .[]' "${nodes_json}")"
-  [[ -n "${managed_node_cidrs}" ]] || lab_gate_die "managed AKS nodes have no published Azure overlay pod CIDRs"
+  [[ -n "${managed_node_cidrs}" ]] || lab_gate_die "managed AKS nodes have no Unbounded pod CIDRs"
   while IFS= read -r managed_node_cidr; do
-    [[ -n "${managed_node_cidr}" ]] || lab_gate_die "a managed AKS node has no published Azure overlay pod CIDR"
+    [[ -n "${managed_node_cidr}" ]] || lab_gate_die "a managed AKS node has no Unbounded pod CIDR"
     python3 -c 'import ipaddress, sys; child = ipaddress.ip_network(sys.argv[2]); assert child.prefixlen == 24 and child.subnet_of(ipaddress.ip_network(sys.argv[1]))' "${TF_VAR_cilium_pod_cidr}" "${managed_node_cidr}" ||
       lab_gate_die "managed AKS node podCIDR ${managed_node_cidr} is not a /24 inside ${TF_VAR_cilium_pod_cidr}"
   done <<<"${managed_node_cidrs}"
@@ -268,7 +257,7 @@ lab_gate_unbounded_flex_ready() {
   flex_unbounded_pod="$(jq -r --arg node "${LAB_GATE_FLEX_NODE_NAME}" '[.items[] | select(.spec.nodeName == $node and .metadata.labels["app.kubernetes.io/name"] == "unbounded-net-node") | select(.status.phase == "Running") | select([.status.containerStatuses[]? | select(.ready != true)] | length == 0) | .metadata.name] | first // empty' "${unbounded_pods_json}")"
   [[ -n "${flex_unbounded_pod}" ]] || lab_gate_die "Unbounded node agent is not Ready on Flex node ${LAB_GATE_FLEX_NODE_NAME} (pods: ${unbounded_pods_json})"
 
-  kubectl -n kube-system get pods -l k8s-app=cilium -o json >"${cilium_pods_json}"
+  kubectl -n kube-system get pods -l k8s-app=cilium -o json >"${cilium_pods_json}" 2>/dev/null || true
   cilium_on_flex="$(jq -r --arg node "${LAB_GATE_FLEX_NODE_NAME}" '[.items[] | select(.spec.nodeName == $node)] | length' "${cilium_pods_json}")"
   [[ "${cilium_on_flex}" -eq 0 ]] || lab_gate_die "AKS-managed Cilium must not schedule on Flex node ${LAB_GATE_FLEX_NODE_NAME}"
 
@@ -278,9 +267,8 @@ lab_gate_unbounded_flex_ready() {
     lab_gate_die "AKS-managed node ${aks_node_name} must not use Unbounded-managed kube-proxy"
   aks_unbounded_pod="$(jq -r --arg node "${aks_node_name}" '[.items[] | select(.spec.nodeName == $node and .metadata.labels["app.kubernetes.io/name"] == "unbounded-net-node") | .metadata.name] | first // empty' "${unbounded_pods_json}")"
   [[ -n "${aks_unbounded_pod}" ]] || lab_gate_die "unable to inspect CNI files on AKS-managed node ${aks_node_name}"
-  if kubectl -n unbounded-system exec "${aks_unbounded_pod}" -c node -- ip -4 route show "${TF_VAR_cilium_pod_cidr}" | grep -q 'dev unbounded0'; then
-    lab_gate_die "Unbounded routes managed AKS pod CIDR ${TF_VAR_cilium_pod_cidr} through unbounded0 on ${aks_node_name}"
-  fi
+  kubectl -n unbounded-system exec "${aks_unbounded_pod}" -c node -- ip -4 route show "${TF_VAR_cilium_pod_cidr}" | grep -q 'dev unbounded0' ||
+    lab_gate_die "Unbounded does not route managed AKS pod CIDR ${TF_VAR_cilium_pod_cidr} through unbounded0 on ${aks_node_name}"
   kubectl -n unbounded-system exec "${aks_unbounded_pod}" -c node -- tc filter show dev unbounded0 egress >"${aks_tc_filters}"
   grep -q 'unbounded_encap' "${aks_tc_filters}" || lab_gate_die "Unbounded does not own the unbounded0 TC egress filter on ${aks_node_name} (filters: ${aks_tc_filters})"
   ! grep -q 'cil_to_netdev' "${aks_tc_filters}" || lab_gate_die "managed Cilium attached to unbounded0 on ${aks_node_name} (filters: ${aks_tc_filters})"
@@ -289,13 +277,14 @@ lab_gate_unbounded_flex_ready() {
   kubectl -n unbounded-system exec "${flex_unbounded_pod}" -c node -- sh -c 'find /host/etc/cni/net.d -maxdepth 1 -type f \( -name "*.conf" -o -name "*.conflist" -o -name "*.json" \) -print | sort' >"${flex_cni_files}"
   aks_cni_count="$(wc -l <"${aks_cni_files}" | tr -d ' ')"
   flex_cni_count="$(wc -l <"${flex_cni_files}" | tr -d ' ')"
-  [[ "${aks_cni_count}" -eq 1 ]] || lab_gate_die "AKS-managed node ${aks_node_name} must have one active CNI config; found ${aks_cni_count} (files: ${aks_cni_files})"
-  ! grep -q '/10-unbounded.conflist$' "${aks_cni_files}" || lab_gate_die "Unbounded wrote CNI configuration on AKS-managed node ${aks_node_name}"
+  if [[ "${aks_cni_count}" -ne 1 ]] || ! grep -q '/10-unbounded.conflist$' "${aks_cni_files}"; then
+    lab_gate_die "AKS-managed node ${aks_node_name} must have only 10-unbounded.conflist active (files: ${aks_cni_files})"
+  fi
   if [[ "${flex_cni_count}" -ne 1 ]] || ! grep -q '/10-unbounded.conflist$' "${flex_cni_files}"; then
     lab_gate_die "Flex node ${LAB_GATE_FLEX_NODE_NAME} must have only 10-unbounded.conflist active (files: ${flex_cni_files})"
   fi
 
-  lab_gate_pass "Unbounded owns Flex CNI and kube-proxy without replacing managed AKS Cilium"
+  lab_gate_pass "Unbounded owns the no-CNI AKS and Flex networking path"
 }
 
 lab_gate_flex_dns_ready() {
@@ -429,7 +418,7 @@ lab_gate_aks_to_flex_line_of_sight() {
   flex_service="flex-route-service-$(date +%s)"
   aks_log="${artifact_dir}/${aks_server_pod}.log"
   flex_log="${artifact_dir}/${flex_server_pod}.log"
-  service_log="${artifact_dir}/mixed-cni-clusterip.log"
+  service_log="${artifact_dir}/unbounded-clusterip.log"
   aks_describe="${artifact_dir}/${aks_server_pod}-describe.txt"
   flex_describe="${artifact_dir}/${flex_server_pod}-describe.txt"
 
@@ -546,5 +535,5 @@ EOF
   [[ "${aks_to_flex_service}" == *"flex-route-ok"* ]] || lab_gate_die "AKS pod did not reach Flex ClusterIP ${flex_service_ip}:8080 (output: ${service_log})"
   [[ "${flex_to_aks_service}" == *"aks-route-ok"* ]] || lab_gate_die "Flex pod did not reach AKS ClusterIP ${aks_service_ip}:8080 (output: ${service_log})"
 
-  lab_gate_pass "Mixed-CNI connectivity: bilateral pod traffic and ClusterIP routing from AKS and Flex"
+  lab_gate_pass "Unbounded connectivity: bilateral pod traffic and ClusterIP routing from AKS and Flex"
 }

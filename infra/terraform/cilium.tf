@@ -26,12 +26,8 @@ resource "terraform_data" "managed_cni_ready" {
         --query networkProfile \
         -o json)"
       NETWORK_PLUGIN="$(jq -r '.networkPlugin // empty' <<<"$NETWORK_PROFILE")"
-      NETWORK_PLUGIN_MODE="$(jq -r '.networkPluginMode // empty' <<<"$NETWORK_PROFILE")"
-      NETWORK_DATA_PLANE="$(jq -r '.networkDataplane // .networkDataPlane // empty' <<<"$NETWORK_PROFILE")"
-      POD_CIDR="$(jq -r '.podCidr // empty' <<<"$NETWORK_PROFILE")"
-      if [[ "$NETWORK_PLUGIN" != "azure" || "$NETWORK_PLUGIN_MODE" != "overlay" || "$NETWORK_DATA_PLANE" != "cilium" || "$POD_CIDR" != "$AKS_POD_CIDR" ]]; then
-        printf 'error: AKS must report Azure CNI Overlay powered by Cilium with podCidr=%s; observed plugin=%s mode=%s dataplane=%s podCidr=%s\n' \
-          "$AKS_POD_CIDR" "$NETWORK_PLUGIN" "$NETWORK_PLUGIN_MODE" "$NETWORK_DATA_PLANE" "$POD_CIDR" >&2
+      if [[ "$NETWORK_PLUGIN" != "none" ]]; then
+        printf 'error: AKS must use networkPlugin=none for the Unbounded no-CNI lab flow; observed plugin=%s\n' "$NETWORK_PLUGIN" >&2
         exit 1
       fi
 
@@ -42,7 +38,7 @@ resource "terraform_data" "managed_cni_ready" {
         --only-show-errors >/dev/null
       kubelogin convert-kubeconfig -l azurecli >/dev/null
 
-      kubectl -n kube-system rollout status daemonset/cilium --timeout=10m
+      kubectl get nodes --no-headers >/dev/null
     EOT
   }
 

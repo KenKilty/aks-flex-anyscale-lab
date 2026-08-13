@@ -1,7 +1,7 @@
 ---
 title: "Module 1: Prepare Your Environment"
 description: Install the required tools, sign in to Azure, choose the CPU or GPU path, and check quota before creating resources.
-sidebar_position: 2
+sidebar_position: 3
 sidebar_label: "Module 1: Prepare Your Environment"
 tags:
   - aks
@@ -16,28 +16,33 @@ Before you deploy anything, confirm that your workstation and Azure subscription
 can support the path you chose. You will authenticate, check regional quota, and
 save the settings that every deployment and workload command uses.
 
+If you have not read [Key Concepts](./key-concepts), start there. It explains
+Ray, AKS Flex Node, and Anyscale, which the steps below assume you know.
+
 ## What You Will Do
 
 You will verify that your workstation has the required tools, confirm Azure quota
 for the path you plan to run, and create the local `.env` file that drives the
-rest of the lab. This is also where you choose the CPU or GPU Flex path that your
-Azure environment supports before Terraform creates any resources.
+rest of the lab. This is also where you choose whether the external machine runs
+on CPU or GPU hardware, because that choice decides the VM size Terraform creates
+in the next module.
 
 ## Regional Prerequisites
 
-You will use two Azure regions so the Ray head and worker can run in different
-locations. Region A hosts AKS and must support the Anyscale operator extension.
-Region B hosts the external Flex VM and needs capacity for the VM size you choose.
+This lab uses two Azure regions so that the [Ray head and its
+workers](./key-concepts) run in different locations. To keep the instructions
+readable, the guide always calls them Region A and Region B:
 
-| Lab name | Value in `.env` | What runs there |
+| Lab name | What runs there | Value in `.env` |
 | --- | --- | --- |
-| Region A | `TF_VAR_azure_location` | Public AKS cluster, storage, ACR, and Anyscale operator extension |
-| Region B | `TF_VAR_flex_region` | Flex host and Ray worker for the selected CPU or GPU path |
+| Region A | Public AKS cluster, storage, ACR, and the Anyscale operator extension | `TF_VAR_azure_location` |
+| Region B | The Flex machine and its Ray worker | `TF_VAR_flex_region` |
 
-The names Region A and Region B stay the same throughout the guide. Their actual
-Azure location values can differ between lab environments. Choose Region A based
-on Anyscale extension availability, then choose a reachable Region B with quota
-and capacity for the Flex host.
+You choose the real Azure locations yourself and set them in `.env` later in this
+module, based on what your subscription supports. Pick Region A from the regions
+where the Anyscale operator extension is available, and pick Region B from the
+regions where you have quota for the VM size you want. The guide keeps saying
+Region A and Region B no matter which locations you choose.
 
 :::caution Region A must support the Anyscale extension
 Choose Region A with Anyscale operator availability in mind. After Module 2
@@ -60,14 +65,23 @@ where you store your other repositories.
 
 ## Step 2: Create the local lab environment
 
+`./scripts/anyscale-aks.sh` is the single entry point for the lab. Every later
+module calls it to plan, deploy, join the Flex machine, and delete everything at
+the end. Running it with `bootstrap` prepares your workstation:
+
 ```bash
 ./scripts/anyscale-aks.sh bootstrap
 ```
 
-The command creates `.env` from `.env-template`, records the subscription and
-tenant from your current Azure CLI session, creates the SSH key configured by
-`SSH_PRIVATE_KEY_PATH` when it is missing, and installs the Anyscale CLI in
-`.venv`. It does not deploy Azure resources.
+This one command does four things, and none of them create Azure resources or
+cost money:
+
+| What it does | Why it matters |
+| --- | --- |
+| Copies `.env-template` to `.env` if you do not already have one | `.env` is your private settings file for the whole lab |
+| Reads your current Azure CLI sign-in and writes your subscription and tenant IDs into `.env` | Later commands act on the right Azure subscription without you copying IDs by hand |
+| Creates an SSH key at `SSH_PRIVATE_KEY_PATH` if that file is missing | Module 3 uses this key to sign in to the Flex machine |
+| Installs the Anyscale command-line tool into a local `.venv` folder | You get the exact tool version the lab expects, without changing your system Python |
 
 Expected final lines:
 
@@ -81,25 +95,56 @@ next: ./scripts/anyscale-aks.sh doctor
 Keep `.env` for the full lab. It is ignored by Git and drives every deployment,
 workload, and teardown command.
 
-## Step 3: Verify your Azure region and VM-size settings in `.env`
+## Step 3: Set your regions and VM sizes in `.env`
 
-Open `.env` and verify that the four Azure ID values match `az account show`.
-Set `TF_VAR_azure_location` and `TF_VAR_region_short` to the actual Azure name
-and short label for Region A. Set `TF_VAR_flex_region` and
-`TF_VAR_flex_region_short` for Region B. Set the CPU or GPU VM sizes for the path
-available in your Azure environment, and keep
+Step 2 created `.env` for you by copying `.env-template`. Git ignores `.env`, so
+it stays on your machine and never reaches the repository. Confirm it exists
+before you edit it:
+
+```bash
+ls -l .env
+```
+
+If the file is missing because you skipped Step 2, create it and rerun bootstrap:
+
+```bash
+cp .env-template .env
+chmod 600 .env
+./scripts/anyscale-aks.sh bootstrap
+```
+
+The template ships with working defaults for every setting, so you only need to
+review a few values. Open `.env` in your editor and check these:
+
+1. **Azure IDs.** Confirm both subscription entries and both tenant entries match
+   `az account show`. Step 2 filled these in for you.
+2. **Regions.** Set `TF_VAR_azure_location` and `TF_VAR_region_short` for Region
+   A, and `TF_VAR_flex_region` and `TF_VAR_flex_region_short` for Region B. The
+   short values become part of Azure resource names, so use brief lowercase
+   labels such as `wus2`.
+3. **VM sizes.** Set the CPU or GPU sizes for the path you plan to run. Step 5
+   checks their quota, and Step 6 lists the exact values for each path.
+4. **Owner tag.** Replace `change-me` in `TF_VAR_tags` with your name or team so
+   the Azure resources have an owner.
+
+Accept the defaults for everything else. In particular, keep
 `TF_VAR_cilium_pod_cidr="10.83.0.0/16"` for AKS-managed pods and
-`TF_VAR_unbounded_flex_pod_cidr="10.84.0.0/16"` for Flex pods. The ranges must
-not overlap each other, either VNet, or the service CIDR. The Flex host is
-enabled by default because every lab path uses it.
+`TF_VAR_unbounded_flex_pod_cidr="10.84.0.0/16"` for Flex pods unless they collide
+with a network you need to reach. These ranges must not overlap each other,
+either VNet, or the service CIDR. The Flex machine is enabled by default because
+every lab path uses it.
 
-These values are the local environment profile used by every wrapper command:
+Keep the `TF_VAR_cilium_pod_cidr` variable name unchanged. In this lab it names
+the address range that Unbounded assigns to managed AKS nodes; it does not enable
+Cilium.
+
+These values are the local environment profile used by every lab command:
 
 | Setting | What it controls | Where you use it next |
 | --- | --- | --- |
 | `TF_VAR_azure_location` and `TF_VAR_region_short` | Region A and the AKS resource names | Module 2 creates AKS; Module 4 checks Anyscale extension availability here. |
 | `TF_VAR_flex_region` and `TF_VAR_flex_region_short` | Region B and the Flex host resource names | Module 2 creates the VNet and Flex VM here; Module 3 joins the VM to AKS. |
-| `TF_VAR_cilium_pod_cidr` and `TF_VAR_unbounded_flex_pod_cidr` | Separate pod address ranges for AKS-managed nodes and Flex nodes | Module 2 configures Azure CNI Overlay; Module 3 verifies Unbounded IPAM and cross-site routing. |
+| `TF_VAR_cilium_pod_cidr` and `TF_VAR_unbounded_flex_pod_cidr` | Separate pod address ranges for AKS-managed nodes and Flex nodes | Module 2 configures AKS with `networkPlugin=none`; Module 3 verifies address assignment and cross-region routing. |
 | `TF_VAR_system_vm_size` and `TF_VAR_cpu_vm_size` | The AKS system and CPU node pools | This step checks their Region A quota before Module 2 creates them. |
 | `TF_VAR_flex_host_vm_size` and `TF_VAR_flex_host_source_image_reference` | The CPU or GPU Flex VM and its host image | Module 2 creates this VM; Module 3 joins it to AKS. |
 | `TF_VAR_anyscale_enabled` | Whether Terraform creates the Anyscale cloud, extension, and Gateway | Keep it `"false"` until Module 4 confirms Region A support. |
@@ -110,23 +155,41 @@ These values are the local environment profile used by every wrapper command:
 ./scripts/anyscale-aks.sh doctor
 ```
 
-Expected output:
+The command prints one line per check and stops at the first failure. Expected
+output:
 
-```json
+```text
+PASS required local commands are installed
+PASS Anyscale control plane is https://console.azure.anyscale.com
+PASS Azure CLI subscription and tenant match <repository-path>/.env
 {
   "subscription": "<your-subscription-id>",
   "tenant": "<your-tenant-id>",
   "user": "<your-user>"
 }
+PASS required environment values are present and parseable
+PASS required Azure resource providers are registered
+PASS Anyscale on Azure service principal is available
+PASS Anyscale.Platform supports Region A <region-a-azure-name>
+PASS AKS system pool <system-vm-size> is available in <region-a-azure-name> (<remaining> <quota-family> vCPUs remain)
+PASS AKS CPU pool <cpu-vm-size> is available in <region-a-azure-name> (<remaining> <quota-family> vCPUs remain)
+PASS Flex host <flex-vm-size> is available in <region-b-azure-name> (<remaining> <quota-family> vCPUs remain)
+PASS Anyscale CLI is authenticated to https://console.azure.anyscale.com
+PASS AKS is not deployed; operator extension availability will be checked after cluster creation
+PASS Anyscale on Azure prerequisites are ready
 ```
 
-If this fails, read the named missing command, install it, and retry. If the
-Anyscale CLI is missing, rerun `./scripts/anyscale-aks.sh bootstrap`.
+This run also checks quota, so the last line is your signal that the environment
+is ready. If a check fails, the command names the exact problem. Install a
+missing command and retry. If the Anyscale CLI is missing, rerun
+`./scripts/anyscale-aks.sh bootstrap`. If the CLI is not authenticated, run
+`ANYSCALE_HOST=https://console.azure.anyscale.com .venv/bin/anyscale login`.
 
 ## Step 5: Check Azure quota for your chosen path
 
 Use this helper to find the quota family for a VM size selected in `.env`, then
-show its current usage and limit:
+show its current usage and limit. Run it in the same terminal you use for the
+rest of this step, because the following subsections call this function:
 
 ```bash
 source .env
@@ -180,15 +243,18 @@ pools in that calculation. The values differ by subscription and region.
 
 ### GPU path
 
-Check the GPU Flex host size selected in `.env`:
+Check the managed AKS GPU size in Region A and the GPU Flex host size in Region B.
+The GPU path uses one GPU in each location:
 
 ```bash
+MANAGED_GPU_VM_SIZE="$(jq -r 'to_entries[0].value.vm_size' <<<"$TF_VAR_gpu_pool_configs")"
+check_vm_quota "$TF_VAR_azure_location" "$MANAGED_GPU_VM_SIZE"
 check_vm_quota "$TF_VAR_flex_region" "$TF_VAR_flex_host_vm_size"
 ```
 
-If the selected GPU VM family has insufficient quota or the VM size is
-unavailable, choose another GPU VM size or reachable Region B. Update the
-matching `.env` values before deploying AKS.
+Both commands must show enough remaining family quota for one VM. If either GPU
+size is unavailable, choose a supported size or region and update the matching
+`.env` values before deploying AKS.
 
 :::tip Quota increase
 If your CPU quota is low, request an increase at
@@ -198,16 +264,16 @@ before continuing. GPU quota can be requested later if you want to extend the la
 
 ## Step 6: Set your CPU or GPU path
 
-| Step | CPU path | GPU path |
+| What differs | CPU path | GPU path |
 | --- | --- | --- |
-| Module sequence | CPU workload path | GPU workload path |
-| Region A | Value of `TF_VAR_azure_location` | Same Region A; must support the Anyscale AKS extension |
-| Region B | Value of `TF_VAR_flex_region` | Same role, with quota and capacity for the selected GPU VM size |
-| Workload | CPU-only Ray worker on Flex | `GPU:1` Ray worker on the GPU Flex host |
+| Region A | AKS CPU node runs the Ray head | AKS CPU node runs the Ray head, plus one managed `GPU:1` Ray worker |
+| Region B | CPU Flex host runs the Ray worker | GPU Flex host runs one `GPU:1` Ray worker |
+| Workload | One CPU-only Ray worker on Flex | One two-rank GPU training run spanning managed AKS and Flex |
+| Cost and time | Lower cost, shorter run | Higher cost, longer run and GPU quota in both regions |
 
 :::caution Choose the host profile before creating it
-The selected path determines the Flex VM size and source image. Changing a live
-CPU Flex host to a GPU VM or GPU-ready image makes Terraform replace that host.
+The selected path determines the Flex VM size. Changing a live CPU Flex host to
+a GPU VM makes Terraform replace that host.
 Use a new environment when you want to switch paths without replacing an
 existing host. The CPU path is the lower-cost first run; use the GPU path only
 after the Region B quota check succeeds.
@@ -232,22 +298,22 @@ the corresponding host assignments in `.env` with the values supplied for your
 Azure environment:
 
 ```bash
+TF_VAR_gpu_pool_configs='{"gpu":{"name":"gpupool","vm_size":"<managed-gpu-vm-size>","product_name":"<managed-kubernetes-gpu-product-label>","gpu_count":"1","min_count":1,"max_count":1,"availability_zones":[]}}'
 TF_VAR_flex_host_vm_size="<gpu-vm-size>"
-TF_VAR_flex_host_source_image_reference='<gpu-ready-source-image-reference-json>'
+TF_VAR_flex_host_source_image_reference='{"publisher":"Canonical","offer":"ubuntu-24_04-lts","sku":"server","version":"latest"}'
 ANYSCALE_FLEX_GPU_ENABLED="true"
-ANYSCALE_RESULTS_GPU_PRODUCT_LABEL="<kubernetes-gpu-product-label>"
+ANYSCALE_RESULTS_GPU_PRODUCT_LABEL="<flex-kubernetes-gpu-product-label>"
 ```
 
-The GPU source image must already include NVIDIA drivers for the selected VM
-size. Use the exact image reference supplied for your Azure environment. Module
-5 verifies those drivers, then installs the Kubernetes NVIDIA device plugin that
-advertises the GPU to workloads. The template already targets the Flex node and
-starts one GPU worker. Increase the worker count only when the selected VM
-exposes enough GPUs.
+Keep `gpu_count`, `min_count`, and `max_count` at `1`. This guarantees that the
+two Ray Train workers cannot land in the same node domain. Terraform installs
+the Azure NVIDIA driver extension on the Ubuntu 24.04 Flex VM. Module 5 checks
+that driver, installs the NVIDIA device plugin on both GPU nodes, and verifies
+one allocatable GPU in each pool.
 
 :::caution Complete the environment first
-Wait until managed Cilium, the Flex node's Unbounded network, DNS, and the
-Anyscale Gateway all pass their readiness checks before running the Anyscale
+Wait until AKS reports `networkPlugin=none`, the Flex node networking, DNS, and
+the Anyscale Gateway all pass their readiness checks before running the Anyscale
 workload.
 :::
 
@@ -256,7 +322,8 @@ workload.
 Run the environment check and save a timestamped report:
 
 ```bash
-./scripts/anyscale-aks.sh doctor | tee .cache/env-check-$(date +%Y%m%d-%H%M%S).json
+mkdir -p .cache
+./scripts/anyscale-aks.sh doctor | tee .cache/env-check-$(date +%Y%m%d-%H%M%S).txt
 ```
 
 Save this file with the Step 5 quota output. Together, they record which Azure

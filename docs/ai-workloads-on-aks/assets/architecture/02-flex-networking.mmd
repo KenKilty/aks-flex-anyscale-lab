@@ -1,7 +1,7 @@
 flowchart LR
-  aks["1. Region A<br/>AKS node and Ray head pod<br/>Managed Cilium owns pod networking"]
-  network["2. Azure network<br/>Unbounded SitePeering tunnel<br/>over peered VNet addresses"]
-  flex["3. Region B<br/>Flex node and Ray worker pod<br/>Unbounded owns CNI and kube-proxy"]
+  aks["1. Region A<br/>AKS node and Ray head pod<br/>Unbounded pod networking"]
+  network["2. Azure network<br/>Unbounded carries pod traffic<br/>over peered VNet addresses"]
+  flex["3. Region B<br/>Flex node and Ray worker pod<br/>Unbounded pod networking + kube-proxy"]
 
   aks --> network --> flex
 

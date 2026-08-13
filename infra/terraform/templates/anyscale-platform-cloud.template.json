@@ -379,45 +379,9 @@
         "adminUserEnabled": false
       },
       "tags": "[union(if(contains(parameters('tagsByResource'), 'Microsoft.ContainerRegistry/registries'), parameters('tagsByResource')['Microsoft.ContainerRegistry/registries'], json('{}')), createObject('anyscale-cloud', parameters('cloudName')))]"
-    },
-    {
-      "type": "Anyscale.Platform/clouds",
-      "apiVersion": "2026-02-01-preview",
-      "name": "[parameters('cloudName')]",
-      "location": "[parameters('location')]",
-      "dependsOn": [
-        "[resourceId('Microsoft.ContainerRegistry/registries', variables('acrSafeName'))]"
-      ],
-      "properties": {
-        "acrResourceId": "[if(equals(parameters('acrMode'), 'none'), null(), variables('acrResourceId'))]"
-      },
-      "tags": "[union(if(contains(parameters('tagsByResource'), 'Anyscale.Platform/clouds'), parameters('tagsByResource')['Anyscale.Platform/clouds'], json('{}')), createObject('anyscale-cloud', parameters('cloudName')))]"
-    },
-    {
-      "type": "Anyscale.Platform/clouds/cloudResources",
-      "apiVersion": "2026-02-01-preview",
-      "name": "[concat(parameters('cloudName'), '/default')]",
-      "location": "[parameters('location')]",
-      "dependsOn": [
-        "[resourceId('Anyscale.Platform/clouds', parameters('cloudName'))]",
-        "[parameters('storageBlobServiceDeploymentName')]",
-        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('workloadIdentityName'))]"
-      ],
-      "properties": {
-        "provider": "Azure",
-        "computeStack": "K8S",
-        "cloudStorageBucketName": "[variables('abfssUrl')]",
-        "cloudStorageBucketEndpoint": "[variables('blobEndpoint')]",
-        "anyscaleOperatorIamIdentity": "[reference(variables('effectiveIdentityResourceId'), '2023-01-31').principalId]"
-      },
-      "tags": "[union(if(contains(parameters('tagsByResource'), 'Anyscale.Platform/clouds/cloudResources'), parameters('tagsByResource')['Anyscale.Platform/clouds/cloudResources'], json('{}')), createObject('anyscale-cloud', parameters('cloudName')))]"
     }
   ],
   "outputs": {
-    "cloudResourceId": {
-      "type": "string",
-      "value": "[reference(resourceId('Anyscale.Platform/clouds/cloudResources', parameters('cloudName'), 'default'), '2026-02-01-preview').cloudResourceId]"
-    },
     "storageAccountName": {
       "type": "string",
       "value": "[parameters('storageAccountName')]"

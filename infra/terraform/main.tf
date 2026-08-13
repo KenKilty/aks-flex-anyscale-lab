@@ -148,6 +148,7 @@ module "flex_host" {
   admin_ssh_public_key        = var.flex_host_admin_ssh_public_key
   os_disk_size_gb             = var.flex_host_os_disk_size_gb
   source_image_reference      = var.flex_host_source_image_reference
+  gpu_driver_enabled          = length(var.gpu_pool_configs) > 0
   secondary_ip_configurations = var.flex_host_secondary_ip_configurations
   user_assigned_identity_ids  = var.flex_host_user_assigned_identity_ids
 
@@ -156,6 +157,14 @@ module "flex_host" {
     azurerm_virtual_network_peering.flex_to_aks,
     terraform_data.unbounded_net,
   ]
+}
+
+resource "azurerm_role_assignment" "flex_host_aks_contributor" {
+  count = var.flex_host_enabled ? 1 : 0
+
+  scope                = module.aks.cluster_id
+  role_definition_name = "Azure Kubernetes Service Contributor Role"
+  principal_id         = module.flex_host[0].principal_id
 }
 
 resource "azurerm_virtual_network" "flex" {

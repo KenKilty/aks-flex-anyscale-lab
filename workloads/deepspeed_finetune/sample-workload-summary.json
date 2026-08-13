@@ -24,6 +24,36 @@
     "region_hint": "westus3",
     "node_hint": "vm-flex-flexany-dev-wus3"
   },
+  "worker_snapshots": [
+    {
+      "run_id": "results-smoke-0001",
+      "experiment_name": "aks-flexany-results-smoke",
+      "rank": 0,
+      "world_size": 1,
+      "hostname": "vm-flex-flexany-dev-wus3",
+      "cuda_available": false,
+      "device_name": "cpu",
+      "region_hint": "westus3",
+      "node_hint": "vm-flex-flexany-dev-wus3"
+    }
+  ],
+  "worker_training_records": [
+    {
+      "run_id": "results-smoke-0001",
+      "experiment_name": "aks-flexany-results-smoke",
+      "rank": 0,
+      "world_size": 1,
+      "hostname": "vm-flex-flexany-dev-wus3",
+      "cuda_available": false,
+      "device_name": "cpu",
+      "region_hint": "westus3",
+      "node_hint": "vm-flex-flexany-dev-wus3",
+      "epoch": 0,
+      "loss": 1.2345,
+      "steps_per_worker": 4,
+      "timestamp_unix": 1751486400
+    }
+  ],
   "runtime_versions": {
     "python": "3.11.9",
     "ray": "2.54.1",

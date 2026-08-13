@@ -190,6 +190,15 @@ def capture_worker_snapshot(run_id: str, experiment_name: str) -> WorkerSnapshot
     )
 
 
+def gather_worker_records(record: dict[str, Any], world_size: int) -> list[dict[str, Any]]:
+    records: list[dict[str, Any] | None] = [None] * world_size
+    if torch.distributed.is_available() and torch.distributed.is_initialized():
+        torch.distributed.all_gather_object(records, record)
+    else:
+        records[0] = record
+    return [worker for worker in records if worker is not None]
+
+
 def save_summary(summary_path: Path, summary: dict[str, Any]) -> None:
     summary_path.parent.mkdir(parents=True, exist_ok=True)
     with summary_path.open("w", encoding="utf-8") as stream:
@@ -283,6 +292,7 @@ def report_metrics_and_save_checkpoint(
 ) -> None:
     context = ray.train.get_context()
     snapshot = capture_worker_snapshot(run_id, context.get_experiment_name())
+    worker_snapshots = gather_worker_records(asdict(snapshot), snapshot.world_size)
     report_payload = {
         **metrics,
         "run_id": run_id,
@@ -296,6 +306,18 @@ def report_metrics_and_save_checkpoint(
         "region_hint": snapshot.region_hint,
         "node_hint": snapshot.node_hint,
     }
+    training_record = {
+        **asdict(snapshot),
+        "epoch": metrics["epoch"],
+        "loss": metrics["loss"],
+        "steps_per_worker": metrics["steps_per_worker"],
+        "timestamp_unix": int(time.time()),
+    }
+    worker_training_records = gather_worker_records(training_record, snapshot.world_size)
+    print(
+        f"WORKER_TRAINING_JSON={json.dumps(training_record, sort_keys=True, separators=(',', ':'))}",
+        flush=True,
+    )
 
     if checkpoint_enabled:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -327,6 +349,8 @@ def report_metrics_and_save_checkpoint(
                 "observed_world_size": snapshot.world_size,
             },
             "worker_snapshot": asdict(snapshot),
+            "worker_snapshots": worker_snapshots,
+            "worker_training_records": worker_training_records,
             "runtime_versions": capture_runtime_versions(),
             "metrics": metrics,
             "status": "passed",

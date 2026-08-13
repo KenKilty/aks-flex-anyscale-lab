@@ -117,8 +117,7 @@ resource "azapi_resource" "anyscale_platform" {
   parent_id                 = azurerm_resource_group.this.id
   schema_validation_enabled = false
   response_export_values = {
-    cloud_deployment_id = "properties.outputs.cloudResourceId.value"
-    provisioning_state  = "properties.provisioningState"
+    provisioning_state = "properties.provisioningState"
   }
   body = {
     properties = {
@@ -203,6 +202,53 @@ resource "azapi_resource" "anyscale_platform" {
   ]
 }
 
+resource "azapi_resource" "anyscale_cloud" {
+  count = var.anyscale_enabled ? 1 : 0
+
+  type                      = "Anyscale.Platform/clouds@2026-02-01-preview"
+  name                      = local.anyscale_cloud_name
+  parent_id                 = azurerm_resource_group.this.id
+  location                  = azurerm_resource_group.this.location
+  schema_validation_enabled = false
+  body = {
+    properties = {
+      acrResourceId = module.acr.acr_id
+    }
+  }
+  tags = {
+    anyscale-cloud = local.anyscale_cloud_name
+  }
+
+  depends_on = [azapi_resource.anyscale_platform]
+}
+
+resource "azapi_resource" "anyscale_cloud_resource" {
+  count = var.anyscale_enabled ? 1 : 0
+
+  type                      = "Anyscale.Platform/clouds/cloudResources@2026-02-01-preview"
+  name                      = "default"
+  parent_id                 = azapi_resource.anyscale_cloud[0].id
+  location                  = azurerm_resource_group.this.location
+  schema_validation_enabled = false
+  response_export_values = {
+    cloud_deployment_id = "properties.cloudResourceId"
+  }
+  body = {
+    properties = {
+      provider                    = "Azure"
+      computeStack                = "K8S"
+      cloudStorageBucketName      = "abfss://${module.storage.container_name}@${module.storage.storage_account_name}.dfs.core.windows.net"
+      cloudStorageBucketEndpoint  = "https://${module.storage.storage_account_name}.blob.core.windows.net"
+      anyscaleOperatorIamIdentity = module.identity.principal_id
+    }
+  }
+  tags = {
+    anyscale-cloud = local.anyscale_cloud_name
+  }
+
+  depends_on = [azapi_resource.anyscale_platform]
+}
+
 resource "azurerm_role_assignment" "anyscale_platform" {
   for_each = var.anyscale_enabled ? local.anyscale_platform_resolved_role_assignments : {}
 
@@ -212,7 +258,7 @@ resource "azurerm_role_assignment" "anyscale_platform" {
   principal_id         = each.value.principal_id
   principal_type       = each.value.principal_type
 
-  depends_on = [azapi_resource.anyscale_platform]
+  depends_on = [azapi_resource.anyscale_cloud]
 }
 
 # AKS Marketplace Extension for Anyscale Operator
@@ -235,7 +281,7 @@ resource "azurerm_kubernetes_cluster_extension" "anyscale_operator" {
   configuration_settings = {
     "anyscale-operator.namespace"      = var.anyscale_operator_namespace
     "anyscale-operator.serviceaccount" = var.anyscale_operator_serviceaccount
-    "global.cloudDeploymentId"         = azapi_resource.anyscale_platform[0].output.cloud_deployment_id
+    "global.cloudDeploymentId"         = azapi_resource.anyscale_cloud_resource[0].output.cloud_deployment_id
     "global.controlPlaneURL"           = local.anyscale_control_plane_url
     "global.auth.iamIdentity"          = module.identity.client_id
     "global.auth.audience"             = var.anyscale_auth_audience
@@ -256,7 +302,7 @@ resource "azurerm_kubernetes_cluster_extension" "anyscale_operator" {
   }
 
   depends_on = [
-    azapi_resource.anyscale_platform,
+    azapi_resource.anyscale_cloud_resource,
     azurerm_role_assignment.anyscale_platform,
     azurerm_public_ip.anyscale_gateway,
     terraform_data.managed_istio_ready,
@@ -276,7 +322,7 @@ resource "null_resource" "anyscale_gateway_static_ip" {
     gateway_namespace        = var.anyscale_operator_namespace
     public_ip_name           = azurerm_public_ip.anyscale_gateway[0].name
     public_ip_resource_group = azurerm_public_ip.anyscale_gateway[0].resource_group_name
-    tls_secret_name          = "anyscale-${replace(azapi_resource.anyscale_platform[0].output.cloud_deployment_id, "_", "-")}-certificate"
+    tls_secret_name          = "anyscale-${replace(azapi_resource.anyscale_cloud_resource[0].output.cloud_deployment_id, "_", "-")}-certificate"
   }
 
   provisioner "local-exec" {
@@ -440,7 +486,7 @@ output "anyscale_cloud_name" {
 
 output "anyscale_cloud_deployment_id" {
   description = "Cloud deployment identifier emitted by Azure-native Anyscale resource deployment"
-  value       = var.anyscale_enabled ? azapi_resource.anyscale_platform[0].output.cloud_deployment_id : null
+  value       = var.anyscale_enabled ? azapi_resource.anyscale_cloud_resource[0].output.cloud_deployment_id : null
 }
 
 output "anyscale_gateway_address" {

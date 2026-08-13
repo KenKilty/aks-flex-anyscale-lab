@@ -135,8 +135,8 @@ run "foundation_plan_contract" {
   }
 
   assert {
-    condition     = output.foundation_contract.aks_contract.network_plugin == "azure" && output.foundation_contract.aks_contract.network_plugin_mode == "overlay" && output.foundation_contract.aks_contract.network_data_plane == "cilium" && output.foundation_contract.aks_contract.pod_cidr == "10.83.0.0/16"
-    error_message = "AKS-managed nodes must use Azure CNI Overlay powered by Cilium with the configured AKS pod CIDR."
+    condition     = output.foundation_contract.aks_contract.network_plugin == "none"
+    error_message = "AKS-managed nodes must use the no-CNI network plugin for the Unbounded single-CNI lab flow."
   }
 
   assert {

@@ -8,6 +8,7 @@ cd "${ROOT_DIR}"
 ruff format .
 ruff check . --fix
 mypy
+python3 scripts/check_anyscale_cloud_scope.py
 shellcheck scripts/*.sh
 shfmt -i 2 -w scripts/*.sh
 markdownlint-cli2 --config .markdownlint-cli2.jsonc \

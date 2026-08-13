@@ -40,15 +40,13 @@ resource "azurerm_kubernetes_cluster" "this" {
     azure_rbac_enabled = true
   }
 
+  # Unbounded owns pod networking on managed AKS nodes and the Flex node.
   network_profile {
-    network_plugin      = "azure"
-    network_plugin_mode = "overlay"
-    network_data_plane  = "cilium"
-    outbound_type       = "loadBalancer"
-    pod_cidr            = var.cilium_pod_cidr
-    service_cidr        = var.service_cidr
-    dns_service_ip      = var.dns_service_ip
-    load_balancer_sku   = "standard"
+    network_plugin    = "none"
+    outbound_type     = "loadBalancer"
+    service_cidr      = var.service_cidr
+    dns_service_ip    = var.dns_service_ip
+    load_balancer_sku = "standard"
   }
 
   default_node_pool {

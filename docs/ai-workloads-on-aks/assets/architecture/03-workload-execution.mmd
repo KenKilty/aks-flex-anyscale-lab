@@ -6,22 +6,35 @@ sequenceDiagram
   participant operator as Anyscale operator
   participant api as Kubernetes API
   participant head as Ray head on AKS
-  participant worker as Ray worker on Flex
+  participant managed as GPU worker on managed AKS
+  participant flex as Ray worker on Flex
   participant storage as Azure Blob Storage
 
   learner->>command: Run run-anyscale-workload with CPU or GPU mode
+  command->>api: List Ready nodes and allocatable CPU and memory
+  api-->>command: Return capacity for the selected node pools
+  command->>command: Reserve headroom and write the compute config
   command->>control: Submit compute config and Ray Job
   control->>operator: Reconcile the Anyscale workload
   operator->>api: Create Ray cluster and job resources
   api-->>head: Schedule the head pod in Region A
-  api-->>worker: Schedule the worker pod on aksflexnodes
-  Note over head,worker: Ray traffic crosses managed Cilium and Unbounded pod networks
-  head->>worker: Start distributed training
-  loop Training steps
-    worker-->>head: Return loss and runtime metrics
+  alt CPU mode
+    api-->>flex: Schedule one CPU worker on aksflexnodes
+    head->>flex: Start one-worker CPU training
+    flex-->>head: Return loss and runtime metrics
+  else GPU mode
+    api-->>managed: Schedule one GPU worker in Region A
+    api-->>flex: Schedule one GPU worker on aksflexnodes
+    Note over managed,flex: The same Unbounded network spans AKS and Flex pod traffic
+    head->>managed: Start rank 0 or rank 1
+    head->>flex: Start the other training rank
+    loop Four smoke training steps
+      managed-->>head: Return rank loss and runtime metrics
+      flex-->>head: Return rank loss and runtime metrics
+    end
   end
-  worker->>storage: Write and read workload-summary.json with managed identity
+  head->>storage: Write and read workload-summary.json with managed identity
   command->>control: Poll job state and read driver logs
   control-->>command: Return SUCCEEDED and WORKLOAD_SUMMARY_JSON
   command->>api: Collect Kubernetes pod placement
-  command-->>learner: Save summary and placement files
+  command-->>learner: Save joined dual GPU training proof

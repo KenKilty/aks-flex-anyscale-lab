@@ -362,9 +362,9 @@ check_m5() {
     flex_gpu_allocatable="$(kubectl get nodes -l "agentpool=${AKS_FLEX_AGENT_POOL_NAME:-aksflexnodes}" -o json | jq '[.items[].status.allocatable["nvidia.com/gpu"]? // empty | tonumber] | add // 0')"
     [[ "${flex_gpu_allocatable}" -ge 1 ]] || die "M5-02 Flex GPU pool ${AKS_FLEX_AGENT_POOL_NAME:-aksflexnodes} has no allocatable nvidia.com/gpu; use a GPU driver image and install the NVIDIA device plugin before running the GPU workload"
     pass "M5-02 Flex GPU node available with allocatable GPU"
-  elif [[ "${gpu_config}" == "{}" ]]; then
-    skip "M5-02 GPU path disabled in current env profile"
-  else
+  fi
+
+  if [[ "${gpu_config}" != "{}" ]]; then
     local gpu_allocatable gpu_pool_name gpu_pool_state gpu_ready_node_count
     gpu_pool_name="$(resolve_gpu_pool_name)"
     [[ -n "${gpu_pool_name}" ]] || die "M5-02 unable to determine GPU pool name from TF_VAR_gpu_pool_configs"
@@ -375,6 +375,8 @@ check_m5() {
     gpu_allocatable="$(kubectl get nodes -l "agentpool=${gpu_pool_name}" -o json | jq '[.items[].status.allocatable["nvidia.com/gpu"]? // empty | tonumber] | add // 0')"
     [[ "${gpu_allocatable}" -ge 1 ]] || die "M5-02 GPU node pool ${gpu_pool_name} has no allocatable nvidia.com/gpu; install/repair NVIDIA device plugin and driver readiness before running the GPU workload"
     pass "M5-02 GPU node pool available with allocatable GPU"
+  elif [[ "${ANYSCALE_FLEX_GPU_ENABLED:-false}" != "true" ]]; then
+    skip "M5-02 GPU path disabled in current env profile"
   fi
 
   if [[ "${TF_VAR_flex_host_enabled}" != "true" ]]; then

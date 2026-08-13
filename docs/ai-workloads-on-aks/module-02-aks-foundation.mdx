@@ -1,7 +1,7 @@
 ---
 title: "Module 2: Build the AKS Foundation"
 description: Use Terraform to deploy the public AKS cluster, storage, ACR, observability, and network peering that every later module depends on.
-sidebar_position: 3
+sidebar_position: 4
 sidebar_label: "Module 2: AKS Foundation"
 tags:
   - aks
@@ -12,17 +12,18 @@ tags:
 
 import Cleanup from "../../src/components/SharedMarkdown/_cleanup.mdx";
 
-In this setup, you will deploy a public AKS cluster in **Region A**, along with
-Azure Blob Storage, Azure Container Registry, Log Analytics, and a Flex VM in a
-peered VNet in **Region B**. One Terraform apply creates both compute locations
-and the Azure resources they need before the Flex VM joins AKS.
+In this module, you create the foundation for the entire lab: a public AKS
+cluster in **Region A**, Azure Blob Storage, Azure Container Registry, Log
+Analytics, and a Flex VM in a peered VNet in **Region B**. One Terraform apply
+creates both compute locations and the Azure services they need before the Flex
+VM joins AKS.
 
 ## What You Will Do
 
-You will deploy the public AKS cluster, Flex VM, storage, registry, observability,
-and network peering that the rest of the lab needs. After the apply, you will get
-a kubeconfig, check that the cluster is healthy, and confirm both VNets are
-peered before the Flex VM joins AKS.
+You will deploy the AKS cluster, the Flex VM, the storage and registry, the
+observability resources, and the cross-region networking that the later modules
+rely on. After the apply, you will get a kubeconfig, check that the cluster is
+healthy, and confirm both VNets are peered before you connect the Flex node.
 
 ## Architecture overview
 
@@ -37,14 +38,13 @@ Region A (AKS home region)             Region B (Flex host region)
 
 Terraform creates both sides of the VNet peering before it creates the Flex VM,
 so the host has a cross-region network path when you join it to AKS. It also
-checks the live AKS network profile and waits for Cilium to become ready before
-it starts the Flex VM.
-
-Terraform creates AKS with Azure CNI Overlay powered by managed Cilium. AKS
-allocates managed-node pod addresses from `TF_VAR_cilium_pod_cidr`. Module 3
-adds Unbounded for the Flex node with the separate
-`TF_VAR_unbounded_flex_pod_cidr`; the two CNI implementations keep distinct
-ownership while Unbounded SitePeering connects their pod routes.
+checks the live AKS network profile and waits for the cluster to report `Ready`
+before it starts the Flex VM. The cluster uses `networkPlugin=none`, and
+Terraform adds Unbounded to provide pod networking for the managed AKS nodes.
+Terraform also gives the Flex VM's managed identity permission to register its
+machine with AKS. Module 3 extends the pod network to the Flex node, using
+`TF_VAR_cilium_pod_cidr` for managed AKS pods and
+`TF_VAR_unbounded_flex_pod_cidr` for Flex pods.
 
 ## Step 1: Review your deployment settings
 
@@ -102,8 +102,8 @@ and the summary must show `0 to change, 0 to destroy`.
 
 Expected duration: **15-25 minutes** (AKS cluster creation is the longest step).
 Terraform prints resource progress while Azure creates the cluster. Wait for the
-apply to finish, then use the node, Cilium, and VNet peering checks below as the
-evidence that the foundation is ready.
+apply to finish, then use the node, network profile, and VNet peering checks
+below as the evidence that the foundation is ready.
 
 When complete, Terraform prints the AKS and network details you will use in the
 next module:
@@ -122,6 +122,10 @@ Continue only after AKS is running and both VNet peerings report `Connected` and
 :::
 
 ## Step 4: Connect kubectl to the cluster
+
+`kubectl` is the Kubernetes command-line tool, and it needs credentials before it
+can talk to your new cluster. This command fetches them and stores them in your
+kubeconfig, the local file that holds cluster connection details.
 
 ```bash
 source .env
@@ -160,23 +164,23 @@ konnectivity-agent-7c6d8dbf9f-fghij   1/1     Running   0          10m
 kube-proxy-abcde                      1/1     Running   0          10m
 ```
 
-You should see one `sys` node and one `cpu` node in `Ready` state. The CPU pool
-starts with `min_count=1` and can scale to four nodes. The default CPU profile
-does not create an AKS GPU pool. AKS can run additional system pods that are not
-shown in the example. For every listed pod, check that `STATUS` is `Running` and
-that `READY` shows all expected containers ready.
+You should see one or more `sys` nodes and at least one `cpu` node in `Ready`
+state. The CPU pool starts with `min_count=1` and can scale to four nodes. The CPU
+profile does not create an AKS GPU pool. The GPU profile also shows the single
+managed GPU node configured in `TF_VAR_gpu_pool_configs`. AKS can scale the
+system pool and run additional system pods that are not shown in the example.
 
-## Step 6: Verify the managed Cilium foundation
+## Step 6: Verify the AKS pod-networking foundation
 
-Terraform waits for the managed Cilium DaemonSet to become ready on the AKS
-nodes before the apply completes. Check the live network profile and agents
-before you provision the Flex host. These commands prove two parts of the same
-foundation:
+Terraform creates the AKS cluster with `networkPlugin=none` before the Flex host
+joins. Check the live network profile and node health before you provision the
+Flex host. These two commands together show that Unbounded, not an AKS-managed
+plugin, provides pod networking:
 
-1. The AKS network profile proves that Azure CNI Overlay powered by Cilium owns
-   managed-node pod networking and shows the pod and service CIDRs.
-2. The pod list proves that the managed Cilium agents are running on the AKS
-   nodes.
+1. The AKS network profile confirms that the cluster is intentionally running
+   without the AKS-managed pod network path.
+2. The node list confirms that the managed nodes are healthy and that each one
+   received a pod address range from Unbounded.
 
 ```bash
 source .env
@@ -186,28 +190,29 @@ CLUSTER="aks-${TF_VAR_project}-${TF_VAR_environment}-${TF_VAR_region_short}"
 az aks show \
   --resource-group "$RG" \
   --name "$CLUSTER" \
-  --query 'networkProfile.{plugin:networkPlugin,mode:networkPluginMode,dataPlane:networkDataplane,podCidr:podCidr,serviceCidr:serviceCidr}' \
+  --query 'networkProfile.{plugin:networkPlugin,serviceCidr:serviceCidr,podCidr:podCidr}' \
   -o json
 
-kubectl -n kube-system get pods -l k8s-app=cilium -o wide
+kubectl get nodes \
+  -o custom-columns='NAME:.metadata.name,STATUS:.status.conditions[?(@.type=="Ready")].status,POD-CIDR:.spec.podCIDR'
 ```
 
 Expected network profile:
 
 ```json
 {
-  "dataPlane": "cilium",
-  "mode": "overlay",
-  "plugin": "azure",
-  "podCidr": "10.83.0.0/16",
-  "serviceCidr": "10.100.0.0/16"
+  "plugin": "none",
+  "serviceCidr": "10.100.0.0/16",
+  "podCidr": "<AKS control-plane value or null>"
 }
 ```
 
-The pod list must show a managed Cilium pod in `Running` state on each current
-AKS node. No Helm-installed Cilium release should replace these agents. Keep the
-network profile and pod output; together they record the managed-node CNI before
-Module 3 adds the separate Flex network.
+The `plugin` value must be `none`. AKS can still report a cluster-level
+`podCidr`; Unbounded does not use that value to select each node's range. The
+node list must show `True` in `STATUS` and one `/24` from
+`TF_VAR_cilium_pod_cidr` in `POD-CIDR` for every managed node. Keep the network
+profile and node output; together they confirm that Unbounded owns managed-node
+pod networking before Module 3 adds the Flex node.
 
 ## Step 7: Verify the cross-region network connection
 
@@ -242,12 +247,63 @@ Terraform creates both directions. Both `aks-to-flex` and `flex-to-aks` must sho
 either direction is disconnected, failed, or still provisioning. This confirms
 the network path before the Flex VM joins AKS.
 
+## Troubleshooting
+
+### The Terraform apply was interrupted
+
+Terraform can continue an interrupted deployment when its state is readable.
+Inspect the state first, then regenerate the plan before you retry the apply:
+
+```bash
+terraform -chdir=infra/terraform state list
+./scripts/anyscale-aks.sh plan
+./scripts/anyscale-aks.sh apply
+```
+
+The plan should show only the work that remains. Do not delete the resource
+group or state file when `terraform state list` prints managed resources.
+
+If the state command fails and `infra/terraform/terraform.tfstate` is zero bytes,
+do not treat that failure as an empty deployment. Check the target resource
+group directly:
+
+```bash
+source .env
+RG="rg-${TF_VAR_project}-${TF_VAR_environment}-${TF_VAR_region_short}"
+
+wc -c infra/terraform/terraform.tfstate
+az resource list --resource-group "$RG" \
+  --query '[].{Name:name,Type:type}' \
+  -o table
+```
+
+If Azure lists any resource, stop and preserve the state files while you
+reconcile that resource. If the table has no rows and `wc -c` reports `0`, the
+interruption happened before Terraform recorded or created a resource. Delete
+only the empty resource group and zero-byte state file, then rerun the plan:
+
+```bash
+az group delete --name "$RG" --yes
+az group wait --name "$RG" --deleted
+
+if [[ -f infra/terraform/terraform.tfstate && \
+      ! -s infra/terraform/terraform.tfstate ]]; then
+  rm infra/terraform/terraform.tfstate
+fi
+
+./scripts/anyscale-aks.sh plan
+```
+
+The recovery is complete when the plan succeeds and contains only the expected
+create actions for this lab.
+
 ## Success evidence
 
-You can move on when the `sys` node pool is `Ready`, the managed Cilium agents
-are running, and both VNet peerings show `Succeeded`. Keep the network profile,
-Cilium pod list, and peering output. Together, they show that Azure CNI Overlay
-is ready and the cross-region network path is live before the Flex host joins.
+You can move on when the `sys` node pool is `Ready`, the cluster profile shows
+`networkPlugin=none`, and both VNet peerings show `Succeeded`. Keep the network
+profile, node list, and peering output. Together, they show that Unbounded
+provides pod networking and that the cross-region network path is live before the
+Flex host joins.
 
 ## Next step
 

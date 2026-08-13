@@ -2,7 +2,7 @@
 
 GPU capacity often sits outside the exact region, cluster, or datacenter where a team wants to run its AI workload. AKS Flex Node lets an AKS cluster use Linux compute wherever you can reach it: another Azure region, an on-premises machine, or another cloud environment. Anyscale on Azure adds the Ray control plane on top, so teams can submit Jobs, manage compute profiles, and observe distributed workers without rewriting the workload for each location. Together, Flex Node and Anyscale let you run Ray AI/ML workloads where your compute and GPUs already are.
 
-![Home region AKS cluster with Flex expansion](docs/ai-workloads-on-aks/assets/aks-flex-anyscale-multi-region/01-home-region-flex-expansion.svg)
+This lab builds that pattern with two peered Azure regions, which keeps it reproducible in any subscription. It does not create an on-premises or other-cloud network path. What you validate here is the join flow, the pod networking between sites, and the proof that one job trained across both locations.
 
 ## Start the lab
 
@@ -48,14 +48,15 @@ Module 1 before you create Azure resources.
 In this lab, you learn how to keep AKS as the operating surface for an AI workload even when useful compute sits somewhere else. That pattern matters in organizations with GPU quota in one Azure region, existing machines in a datacenter, or accelerator capacity in another cloud environment. AKS Flex Node gives those Linux hosts a way to join the cluster instead of forcing every workload onto one managed node pool.
 
 You will then connect that cluster to Anyscale on Azure and submit a Ray Job to
-the combined capacity. Anyscale provides the Ray control plane for Jobs, compute
-profiles, and workload visibility. Flex Node supplies the reachable compute, and
-Anyscale schedules the workload onto the nodes you select.
+the combined capacity. Anyscale manages the Ray Job, compute config, and workload
+visibility. Flex Node supplies the reachable compute, and Kubernetes places the
+Ray pods on nodes that match the compute config.
 
 Choose the CPU or GPU path supported by quota and capacity in your Azure
-environment. The GPU path schedules a `GPU:1` Ray worker on the configured Flex
-host. In either path, you will inspect Kubernetes placement data to confirm that the worker ran on
-`agentpool=aksflexnodes`. You will also write workload results to Azure Blob
+environment. The GPU path runs one `GPU:1` Ray Train worker on managed AKS and
+one on the configured Flex host in the same two-rank world. You will inspect a
+joined proof that records both ranks, both nodes, and concurrent placement. You
+will also write workload results to Azure Blob
 Storage with workload identity, then remove the environment and confirm that
 Terraform state is empty.
 
@@ -70,10 +71,13 @@ those values to Terraform.
 | --- | --- | --- |
 | Region A | Value of `TF_VAR_azure_location` | AKS, storage, ACR, observability, Anyscale cloud binding |
 | Region B | Value of `TF_VAR_flex_region` | Cross-region Flex worker path for CPU or GPU runs |
+| Cluster network model | `networkPlugin=none` with Unbounded pod networking | Single no-CNI path for managed AKS nodes and the Flex node |
+| Pod address ranges | `TF_VAR_cilium_pod_cidr` and `TF_VAR_unbounded_flex_pod_cidr` | Non-overlapping pod ranges for managed AKS pods and Flex pods |
 | AKS CPU node pool SKU | Value of `TF_VAR_cpu_vm_size` | Home-region CPU pool used when Anyscale needs AKS CPU capacity |
 | Flex host SKU | Value of `TF_VAR_flex_host_vm_size` | CPU or GPU VM size selected for the Flex worker |
-| Flex agent pool label | `aksflexnodes` | Placement target for Ray workers |
-| GPU product label | Value of `ANYSCALE_RESULTS_GPU_PRODUCT_LABEL` | Product selector for the configured Anyscale GPU worker |
+| Flex host image | Value of `TF_VAR_flex_host_source_image_reference` | Ubuntu 24.04 LTS server by default; a GPU host image must include the NVIDIA driver |
+| Flex agent pool label | `aksflexnodes` | Placement target for the external Ray worker |
+| GPU product labels | Values in `TF_VAR_gpu_pool_configs` and `ANYSCALE_RESULTS_GPU_PRODUCT_LABEL` | Product selectors for managed and Flex GPU workers |
 | Anyscale control plane | `https://console.azure.anyscale.com` | Anyscale on Azure console and Jobs API |
 | Workload | `workloads/deepspeed_finetune/train.py` | Ray Train and DeepSpeed workload with structured results |
 
@@ -91,7 +95,7 @@ Azure resources are gone.
 | --- | --- |
 | [1: Prepare Your Environment](docs/ai-workloads-on-aks/module-01-environment-setup.mdx) | Sign in, check tools and quota, and choose the CPU or GPU path |
 | [2: Build the AKS Foundation](docs/ai-workloads-on-aks/module-02-aks-foundation.mdx) | Create AKS, the Flex VM, storage, a container registry, identity, observability, and networking |
-| [3: Connect a Flex Node](docs/ai-workloads-on-aks/module-03-flex-node.mdx) | Join the provisioned Flex VM to AKS and verify pod connectivity |
+| [3: Connect a Flex Node](docs/ai-workloads-on-aks/module-03-flex-node.mdx) | Join the provisioned Flex VM to AKS and verify Unbounded pod networking across both regions |
 | [4: Connect Anyscale](docs/ai-workloads-on-aks/module-04-anyscale-binding.mdx) | Create the Anyscale cloud, assign user access, install the AKS extension, and verify the Gateway |
 | [5: Review Scaling and Readiness](docs/ai-workloads-on-aks/module-05-autoscaling.mdx) | Confirm autoscaling, Flex networking, DNS, Gateway, and GPU availability when selected |
 | [6: Run the Workload](docs/ai-workloads-on-aks/module-06-workload-results.mdx) | Submit the Anyscale Job, inspect its results, and confirm pod placement |
@@ -99,19 +103,16 @@ Azure resources are gone.
 
 ## Success evidence
 
-After Module 6, keep the files under `.cache/anyscale/results/`. The two files that
-matter most are `workload-summary.json` and the Kubernetes placement JSON. The
-summary shows that the workload completed, wrote its result through workload
-identity, and reported the expected region and device details. The placement JSON
-shows which Kubernetes node ran each Ray pod.
+After Module 6, keep the files under `.cache/anyscale/results/`. For GPU mode,
+the `<job-name>-dual-gpu-training-proof.json` file matters most. It joins each
+rank's loss, step count, CUDA device, node, region, and pool with a timestamp
+showing both GPU worker pods were Running concurrently.
 
 For the CPU path, the Ray worker should land on a `vm-flex-...` node with
 `node_agentpool="aksflexnodes"`, and its region should match `TF_VAR_flex_region`.
-For the GPU path, look for the same Flex placement plus `cuda_available=true`, a
-`device_name` that matches the selected accelerator, and an
-`observed_region_hint` that matches the Flex region. A successful Anyscale Job
-alone is not enough; the placement artifact is what shows that the worker used
-Flex capacity.
+For the GPU path, require `world_size=2`, CUDA and completed steps for both ranks,
+one managed GPU pool placement, and one `aksflexnodes` placement. A successful
+Anyscale Job alone is not enough.
 
 This lab uses Anyscale Jobs. Seeing Jobs without Workspaces in the Anyscale
 console is expected.
@@ -125,7 +126,12 @@ Finish with:
 ./scripts/validate-lab.sh teardown
 ```
 
-The current lab is clean only when the resource group is deleted and `terraform -chdir=infra/terraform state list` returns no resources. Stale Azure Anyscale control-plane entries without backing Azure ARM resources cannot be removed by `anyscale cloud delete`; they require provider-side cleanup.
+The current lab is clean only when the lab resource group and the AKS-managed
+resource group are deleted and `terraform -chdir=infra/terraform state list`
+returns no resources. This lab deletes its Anyscale cloud through the Azure
+`Anyscale.Platform` resource provider. If the console retains a cloud shell after
+its backing ARM resource is gone, provider-side cleanup is required because a
+second infrastructure delete cannot reconcile control-plane metadata.
 
 ## Develop and contribute
 

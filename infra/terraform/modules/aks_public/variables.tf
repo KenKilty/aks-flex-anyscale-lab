@@ -32,7 +32,7 @@ variable "nodes_subnet_id" {
 }
 
 variable "cilium_pod_cidr" {
-  description = "Pod CIDR allocated to AKS-managed nodes by Azure CNI Overlay."
+  description = "Pod CIDR allocated to AKS-managed nodes for the no-CNI Unbounded lab flow."
   type        = string
 }
 

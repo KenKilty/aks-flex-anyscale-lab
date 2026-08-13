@@ -1,7 +1,7 @@
 ---
 title: "Module 4: Connect Anyscale to AKS"
 description: Create an Anyscale cloud for the AKS cluster, install the operator extension, and verify the Gateway and user access.
-sidebar_position: 5
+sidebar_position: 6
 sidebar_label: "Module 4: Connect Anyscale"
 tags:
   - anyscale
@@ -9,10 +9,11 @@ tags:
   - ray
 ---
 
-In this setup, you will register the AKS cluster as an Anyscale cloud. An
-Anyscale **cloud** combines the Kubernetes target with its storage, identity, and
-compute settings. You will install the AKS operator extension, assign user RBAC,
-and check the Gateway API path that exposes Ray services.
+In this module, you register the AKS cluster as an Anyscale cloud. As described in
+[Key Concepts](./key-concepts), an Anyscale **cloud** combines the Kubernetes
+target with its storage, identity, and compute settings. You will install the AKS
+operator extension, confirm your own Azure access, and check the Gateway that
+exposes Ray services.
 
 ## What You Will Do
 
@@ -129,16 +130,16 @@ Region A must support `anyscale.aks.operator` or
 for the selected Flex VM, and the peering created in Module 2 connects the two
 networks.
 
-The operator and workloads use federated workload identity to access Azure
-services without a stored storage key or SAS token. This is separate from the
-Anyscale Platform administrator role that lets the deploying user use the
-preview control plane.
+The operator and the workload sign in to Azure Storage with a managed identity
+instead of a stored account key or SAS token. That identity is separate from the
+Anyscale Platform administrator role, which is what lets you use the preview
+control plane.
 
 ## Step 4: Deploy the Anyscale cloud and operator
 
-Terraform creates the `Anyscale.Platform` cloud resource, then installs the
-Azure-managed AKS operator extension and binds it to that cloud. The Anyscale on
-Azure resource provider is currently a preview service.
+Terraform creates the Azure Anyscale cloud and installs the Azure-managed AKS
+operator extension that uses it. The Anyscale on Azure resource provider is
+currently a preview service.
 
 With `.env` configured correctly (region and `TF_VAR_anyscale_enabled="true"`), deploy:
 
@@ -146,26 +147,25 @@ With `.env` configured correctly (region and `TF_VAR_anyscale_enabled="true"`), 
 ./scripts/anyscale-aks.sh apply
 ```
 
-This creates the Anyscale on Azure cloud resource through AzAPI, assigns the
-current principal the `Anyscale Platform Administrator Role` at subscription scope,
-and passes the cloud deployment ID to the AKS operator extension. The extension's
-Marketplace plan is part of this bound deployment, not a separate onboarding path.
-Terraform enables the AKS-managed Gateway controller and waits until its
-`approuting-istio` class and authenticated Kubernetes API access are stable. It
-then prepares Gateway API ingress for Ray services and creates the Workload
-Identity federation and Kubernetes RBAC bindings the operator needs.
+The apply grants your Azure user the Anyscale administrator role, creates the
+Gateway that Ray services use, and configures the identity and Kubernetes access
+required by the operator. After the Gateway is ready, the command checks that the
+exact cloud created for this resource group can reach the operator. The command
+stops if that check fails, so do not continue until the apply succeeds.
 
 Example completion lines:
 
 ```text
-azapi_resource.anyscale_platform[0]: Creation complete
-azurerm_role_assignment.anyscale_platform["current_principal_admin"]: Creation complete
-azurerm_kubernetes_cluster_extension.anyscale_operator: Creation complete
 Apply complete!
+info: Anyscale cloud <cloud-id> passed verification
 ```
 
 Expected duration: **10-15 minutes** (the first operator installation can take
 several minutes).
+
+The apply does not change your organization's default Anyscale cloud. This
+lab binds compute configs and Jobs to the full cloud name emitted by the Azure
+resource, so a stale organization default cannot redirect the workload.
 
 :::caution Anyscale user access is required
 The deployment assigns the signed-in Azure principal the built-in
@@ -209,6 +209,7 @@ Verify the user-side Anyscale Platform RBAC assignment:
 Anyscale Platform Administrator role at subscription scope.
 
 ```bash
+source .env
 PRINCIPAL_ID="$(az ad signed-in-user show --query id -o tsv)"
 
 az role assignment list \
@@ -315,16 +316,16 @@ The distributed Ray job uses this placement:
 | Step | CPU path | GPU path |
 | --- | --- | --- |
 | Head pod | AKS CPU node in Region A | AKS CPU node in Region A |
-| Worker pod | Flex node `agentpool=aksflexnodes` in Region B | GPU-capable Flex node `agentpool=aksflexnodes` in Region B |
+| Worker pod | Flex node `agentpool=aksflexnodes` in Region B | One worker on the managed GPU pool in Region A and one on `agentpool=aksflexnodes` in Region B |
 | DNS policy | Normal `ClusterFirst` | Normal `ClusterFirst` after GPU enablement |
 
-Do not submit the workload until managed Cilium, Unbounded Flex networking, the
-operator, and Gateway readiness checks pass. The CPU path then runs
-`./scripts/run-anyscale-workload.sh --mode cpu`.
+Do not submit the workload until the AKS network profile, Flex networking, the
+operator, and Gateway readiness checks pass. The CPU path then
+runs `./scripts/run-anyscale-workload.sh --mode cpu`.
 
-For the GPU path, continue only after you confirm quota and capacity for the GPU
-VM size selected in `.env` and the readiness checks show `nvidia.com/gpu`
-allocatable on the Flex node.
+For the GPU path, continue only after you confirm quota for both GPU VM sizes in
+`.env` and the readiness checks show one allocatable `nvidia.com/gpu` resource
+on the managed pool and one on the Flex node.
 
 ## Success evidence
 
@@ -333,7 +334,8 @@ Anyscale cloud is visible to the authenticated CLI with the expected Azure and
 Kubernetes fields, the AKS extension reports `Succeeded`, the Gateway has
 `Programmed=True`, and the placement table still sends workers to
 `agentpool=aksflexnodes`. Together, these results show that Azure, Kubernetes,
-and Anyscale are connected before any workload runs.
+and Anyscale are connected before any workload runs. For the GPU path, Module 6
+accepts the run only when the two worker placements cover both GPU pools.
 
 ## Next step
 

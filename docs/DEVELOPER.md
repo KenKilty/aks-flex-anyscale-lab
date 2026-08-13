@@ -32,7 +32,7 @@ expectations.
 | --- | --- |
 | Documentation | Docusaurus 3, MDX, Mermaid, SVG assets |
 | Infrastructure | Terraform, AzureRM provider, AzAPI provider |
-| Azure services | AKS with no built-in CNI, AKS Flex Node, upstream Cilium, managed Istio Gateway API, ACR, Storage, Managed Identity, Log Analytics |
+| Azure services | AKS with `networkPlugin=none` and Unbounded networking, AKS Flex Node with Unbounded pod networking and kube-proxy, managed Istio Gateway API, ACR, Storage, Managed Identity, Log Analytics |
 | Anyscale | Anyscale on Azure Platform cloud, AKS marketplace extension, Anyscale CLI, Ray Jobs |
 | Workload | Python, Ray Train, DeepSpeed, PyTorch, Azure Blob result storage through workload identity |
 | Validation | Bash checks, `jq`, `kubectl`, Azure CLI, Terraform tests, TypeScript, markdownlint, ruff, mypy, npm audit |
@@ -189,13 +189,15 @@ Format `.env-lab2` the same way as `.env-template` and keep it out of Git.
 Important GPU settings:
 
 ```bash
+TF_VAR_gpu_pool_configs='{"gpu":{"name":"gpupool","vm_size":"<managed-gpu-vm-size>","product_name":"<managed-gpu-product-label>","gpu_count":"1","min_count":1,"max_count":1,"availability_zones":[]}}'
 TF_VAR_flex_host_vm_size="<gpu-vm-size>"
 TF_VAR_flex_host_source_image_reference='<gpu-ready-source-image-reference-json>'
 ANYSCALE_FLEX_GPU_ENABLED="true"
-ANYSCALE_RESULTS_GPU_PRODUCT_LABEL="<kubernetes-gpu-product-label>"
-ANYSCALE_RESULTS_GPU_TARGET="flex"
-ANYSCALE_RESULTS_GPU_WORKER_COUNT="1"
+ANYSCALE_RESULTS_GPU_PRODUCT_LABEL="<flex-gpu-product-label>"
 ```
+
+Keep each node domain at one GPU. The GPU workload starts two Ray Train workers
+and fails unless one trains on the managed pool and one trains on Flex.
 
 Important Anyscale user RBAC setting:
 
@@ -313,7 +315,7 @@ run record and keep the adjacent JSON files for automated checks.
 | Module 5 GPU check has no allocatable GPU | NVIDIA device plugin not ready or Flex host lacks driver | Use the GPU host image, run `scripts/install-nvidia-device-plugin.sh`, and wait for allocatable `nvidia.com/gpu` |
 | GPU worker Pending with an unmatched `nvidia.com/gpu.product` selector | Flex node lacks the configured product label | Correct `ANYSCALE_RESULTS_GPU_PRODUCT_LABEL` and re-run `scripts/install-nvidia-device-plugin.sh` |
 | Anyscale console shows Jobs but no Workspaces | The lab uses Anyscale Jobs, not Workspaces | Expected behavior |
-| Old Azure Anyscale cloud remains in Anyscale console after Azure cleanup | Stale control-plane registration with no backing ARM resource | Provider-side cleanup is required; `anyscale cloud delete` is unsupported for Azure clouds |
+| Old Azure Anyscale cloud remains in Anyscale console after Azure cleanup | Stale control-plane registration with no backing ARM resource | The Azure RP owns normal deletion; ask the provider to reconcile a shell whose ARM resource is already gone |
 
 ## Cleanup
 

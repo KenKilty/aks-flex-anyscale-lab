@@ -1,7 +1,7 @@
 ---
 title: "Module 3: Connect a Flex Node"
 description: Join the provisioned Flex host to AKS and verify that workloads can communicate across both regions.
-sidebar_position: 4
+sidebar_position: 5
 sidebar_label: "Module 3: Connect a Flex Node"
 tags:
   - aks
@@ -9,31 +9,27 @@ tags:
   - networking
 ---
 
-Module 2 created a Linux VM in **Region B**. You will now join it to the AKS
-cluster in **Region A** as an AKS Flex node. Unbounded owns CNI and kube-proxy
-on that node, while Azure CNI Overlay powered by managed Cilium remains the CNI
-for AKS-managed nodes.
+Module 2 created the Linux VM in **Region B**. In this module, you join that
+host to the AKS cluster in **Region A** as an AKS Flex node. The AKS cluster uses
+`networkPlugin=none`, and Unbounded owns the networking path on both the managed
+AKS nodes and the Flex node.
 
 ## What You Will Do
 
 You will verify the managed AKS network profile, inspect the provisioned Flex
-VM, generate a join configuration from the current stable AKS Flex Node release,
-and bootstrap the host. You will then schedule test pods and confirm Unbounded
-ownership, DNS, HTTPS access, and bilateral traffic between AKS and Flex before
-connecting Anyscale.
+VM, generate the join configuration from the current stable AKS Flex Node
+release, and bootstrap the host. After that, you will schedule test pods and
+confirm pod addressing, DNS, HTTPS access, and two-way traffic between AKS
+and Flex before you connect Anyscale.
 
 ## How Flex networking works
 
 AKS Flex Node prepares the external machine and joins it to AKS as a worker. It
-does not provide the pod network. Managed Cilium allocates addresses and handles
-services on AKS nodes. Unbounded v0.2.2 allocates Flex pod addresses, runs
-kube-proxy only on Flex, and creates a direct `SitePeering` between the
-`aks-managed` and `flex` sites.
-
-The diagram follows one packet between sites. Unbounded discovers the managed
-AKS node pod `/24`s and the Flex node pod block, then uses its automatically
-selected tunnel protocol to carry traffic over the nodes' private IP addresses
-and VNet peering.
+does not provide the pod network. Unbounded manages the pod networking path for
+both the managed AKS nodes and the Flex node. It allocates Flex pod addresses,
+runs kube-proxy only on Flex, and links the managed AKS and Flex sites over the
+peered VNets. Unbounded discovers the managed AKS node pod `/24`s and the Flex
+pod range, then carries pod traffic between the nodes' private IP addresses.
 
 <!-- Keep this diagram in sync with assets/architecture/02-flex-networking.mmd. -->
 
@@ -42,9 +38,9 @@ and VNet peering.
 
 ```mermaid
 flowchart LR
-  aks["1. Region A<br/>AKS node and Ray head pod<br/>Managed Cilium owns pod networking"]
-  network["2. Azure network<br/>Unbounded SitePeering tunnel<br/>over peered VNet addresses"]
-  flex["3. Region B<br/>Flex node and Ray worker pod<br/>Unbounded owns CNI and kube-proxy"]
+  aks["1. Region A<br/>AKS node and Ray head pod<br/>Unbounded pod networking"]
+  network["2. Azure network<br/>Unbounded carries pod traffic<br/>over peered VNet addresses"]
+  flex["3. Region B<br/>Flex node and Ray worker pod<br/>Unbounded pod networking + kube-proxy"]
 
   aks --> network --> flex
 
@@ -61,24 +57,23 @@ flowchart LR
 </aside>
 </div>
 
-The mixed-CNI network supports the services the workload expects:
+This pod network supports the services the workload expects:
 
 | Workload need | What happens |
 | --- | --- |
-| Pod addresses | Azure CNI Overlay assigns AKS pods from `TF_VAR_cilium_pod_cidr`. Unbounded assigns the Flex node a `/24` from `TF_VAR_unbounded_flex_pod_cidr`. |
-| Kubernetes names and services | Flex pods use normal `ClusterFirst` DNS. Unbounded-managed kube-proxy handles ClusterIP traffic on Flex; managed Cilium handles it on AKS. |
+| Pod addresses | Unbounded manages pod addressing for the AKS-hosted and Flex-hosted workers, with the Flex node assigned a `/24` from `TF_VAR_unbounded_flex_pod_cidr`. |
+| Kubernetes names and services | Flex pods use normal `ClusterFirst` DNS. Unbounded-managed kube-proxy handles ClusterIP traffic on Flex, while the managed AKS path uses the same Unbounded ownership model. |
 | External HTTPS | Flex pods leave through the Flex host's Azure network path. The lab verifies HTTPS access to Anyscale. |
 
 The Flex host reaches the public AKS API over HTTPS to join the cluster and
-report node state. That control-plane connection is separate from the pod
-tunnel. Step 5 checks CNI ownership, DNS, bilateral ClusterIP routing,
-cross-site pod traffic, and external HTTPS with short-lived pods.
+report node state. That connection is separate from the pod network. Step 5
+checks pod addressing, DNS, ClusterIP routing in both directions, pod traffic
+between the regions, and external HTTPS using short-lived test pods.
 
 ## Step 1: Check the AKS network profile
 
-The AKS-managed nodes must use Azure CNI Overlay powered by Cilium before
-Unbounded adds the separate Flex network. Read the live profile before enabling
-the Flex host:
+The AKS-managed nodes must run with `networkPlugin=none` before Unbounded adds
+the separate Flex network. Read the live profile before you join the Flex host:
 
 ```bash
 source .env
@@ -88,41 +83,40 @@ CLUSTER_NAME="aks-${TF_VAR_project}-${TF_VAR_environment}-${TF_VAR_region_short}
 az aks show \
   --resource-group "$RESOURCE_GROUP" \
   --name "$CLUSTER_NAME" \
-  --query 'networkProfile.{plugin:networkPlugin,mode:networkPluginMode,dataPlane:networkDataplane,podCidr:podCidr,serviceCidr:serviceCidr}' \
+  --query 'networkProfile.{plugin:networkPlugin,serviceCidr:serviceCidr,podCidr:podCidr}' \
   -o json
 ```
 
-The foundation prints the managed Azure overlay range:
+The foundation prints this profile:
 
 ```json
 {
-  "dataPlane": "cilium",
-  "mode": "overlay",
-  "plugin": "azure",
-  "podCidr": "10.83.0.0/16",
-  "serviceCidr": "10.100.0.0/16"
+  "plugin": "none",
+  "serviceCidr": "10.100.0.0/16",
+  "podCidr": "<AKS control-plane value or null>"
 }
 ```
 
-The `podCidr` value must equal `TF_VAR_cilium_pod_cidr` in `.env`. It is the
-managed AKS pod range. `TF_VAR_unbounded_flex_pod_cidr` is the separate Flex
-pod range.
+The `plugin` value must be `none`. AKS can still report a cluster-level
+`podCidr`; Unbounded assigns the active managed-node pod ranges from
+`TF_VAR_cilium_pod_cidr`. `TF_VAR_unbounded_flex_pod_cidr` is the separate Flex
+pod range managed by Unbounded.
 
 ## Step 2: Check the provisioned Flex host
 
-This lab validates the CPU Flex path on Ubuntu 24.04. Check the selected host
-image and the VM name created in Module 2:
+Both the CPU and GPU paths use Ubuntu 24.04, which is the image this lab
+validates. Keep that image unless you intentionally test and revalidate a
+different one. Check the selected host image and the VM name created in Module 2:
 
 ```bash
 grep '^TF_VAR_flex_host_source_image_reference=' .env
 ./scripts/anyscale-aks.sh output -raw flex_host_vm_name
 ```
 
-For the CPU path, the image line must include `Canonical`, `ubuntu-24_04-lts`,
-and `server`. For the GPU path, use the image reference you configured in `.env`
-during environment setup. A GPU-ready image includes the NVIDIA drivers for the
-selected VM; Module 5 installs the Kubernetes device plugin that advertises that
-GPU to workloads.
+For both paths, the image line must include `Canonical`, `ubuntu-24_04-lts`, and
+`server`. For the GPU path, Terraform also installs the Azure NVIDIA driver
+extension on the Flex VM. Module 5 checks the driver and installs the Kubernetes
+device plugin that advertises that GPU to workloads.
 
 The second command prints a `vm-flex-...` name. The VM does not have secondary
 pod IPs. Unbounded assigns worker pod addresses from the Flex pod range after
@@ -147,6 +141,11 @@ AKS Flex Node stable release: v<latest>
 generated: <repository-path>/.cache/flex/aks-flex-node-config.json
 ```
 
+If GitHub cannot answer the stable-release lookup, wait briefly and rerun this
+same command. Do not replace the stable-release lookup with a version copied from
+another run, because the bootstrap command checks that the configuration and
+archive use the same release.
+
 ## Step 4: Bootstrap the Flex host
 
 ```bash
@@ -154,8 +153,18 @@ generated: <repository-path>/.cache/flex/aks-flex-node-config.json
 ```
 
 This command copies the configuration to the VM, verifies the downloaded archive,
-starts AKS Flex Node, applies the required Kubernetes labels and taint, and
-approves the Flex node certificate request.
+and starts AKS Flex Node so the machine joins your cluster. It then applies the
+labels this lab uses to target the node, adds a taint, and approves the node's
+certificate request so the cluster trusts it.
+
+A taint marks the node as reserved. Ordinary pods will not land on it unless they
+explicitly tolerate that mark, which keeps unrelated workloads off the machine you
+provisioned for this lab.
+
+On a newly created Ubuntu VM, the command waits for cloud-init and the package
+manager before it installs the Flex components. A short pause at this point is
+expected. If the command reaches its timeout, rerun the same command after the
+host finishes its first-start tasks.
 
 ## Step 5: Verify the Flex workload network
 
@@ -171,21 +180,20 @@ Expected output includes:
 PASS M3-01/M3-02 Flex VM exists and is running
 PASS M3-03/M3-04 Flex node joined and Ready
 PASS M3-05 Flex host runs Ubuntu 24.04
-PASS Azure CNI Overlay powered by managed Cilium ready on AKS
+PASS AKS no-CNI path is active for the Unbounded lab flow
 PASS Flex node <flex-node-name> Ready in <region-b>
-PASS Unbounded owns Flex CNI and kube-proxy without replacing managed AKS Cilium
+PASS Unbounded owns the no-CNI AKS and Flex networking path
 PASS Flex ClusterFirst DNS resolves Anyscale and Kubernetes service names
 PASS Flex pod HTTPS egress reaches console.azure.anyscale.com
-PASS Mixed-CNI connectivity: bilateral pod traffic and ClusterIP routing from AKS and Flex
+PASS Unbounded connectivity: bilateral pod traffic and ClusterIP routing from AKS and Flex
 ```
 
-If the command prints `FAIL` or `ERROR`, use
-the saved result that corresponds to the failed layer. Check
-`flex-host-runtime.json` for VM or join failures, `aks-network-profile.json` and
-the Unbounded site, node, CNI-file, and TC-filter artifacts for ownership
-failures. Use the DNS, egress, or route pod logs for the matching traffic
-failure. Rerun the same Module 3 check after correcting the problem. Continue to
-Module 4 after every required check reports `PASS`.
+If the command prints `FAIL` or `ERROR`, open the saved result for the check that
+failed. Use `flex-host-runtime.json` for VM or join problems, and
+`aks-network-profile.json` with the Unbounded site and node files for pod-network
+problems. Use the DNS, egress, or route pod logs for a traffic problem. Correct
+the problem, then rerun the same Module 3 command. Continue to Module 4 after
+every required check reports `PASS`.
 
 ## Success evidence
 
@@ -196,10 +204,10 @@ pod networking or host details later:
 | Result | What it shows |
 | --- | --- |
 | `flex-host-runtime.json` | The Flex VM runs the validated Ubuntu 24.04 host image and records its kernel version. |
-| `aks-network-profile.json` and `managed-cilium-pods-runtime.json` | AKS uses Azure CNI Overlay powered by managed Cilium, and its agents are ready. |
-| `unbounded-sites-runtime.json`, `unbounded-sitepeering-runtime.json`, and `unbounded-nodes-runtime.json` | Unbounded owns Flex IPAM, advertises both sites' node pod CIDRs, and meshes the sites directly. |
-| `aks-active-cni-files.txt`, `flex-active-cni-files.txt`, and `aks-unbounded0-tc-filters.txt` | Each node has one CNI writer, and Unbounded retains the `unbounded0` TC egress hook on managed nodes. |
-| DNS, egress, and route pod logs | A Flex pod resolved Kubernetes names, reached HTTPS, and exchanged direct and ClusterIP traffic with an AKS pod. |
+| `aks-network-profile.json` | AKS runs with `networkPlugin=none`, so Unbounded provides pod networking. |
+| `unbounded-sites-runtime.json`, `unbounded-sitepeering-runtime.json`, and `unbounded-nodes-runtime.json` | Unbounded assigned the configured pod ranges and connected the AKS and Flex sites. |
+| `aks-active-cni-files.txt`, `flex-active-cni-files.txt`, and `aks-unbounded0-tc-filters.txt` | Unbounded is the only pod-network component configuring each node. |
+| DNS, egress, and route pod logs | A Flex pod resolved Kubernetes names, reached HTTPS, and exchanged direct and ClusterIP traffic with an AKS pod in both directions. |
 
 ## Next step
 

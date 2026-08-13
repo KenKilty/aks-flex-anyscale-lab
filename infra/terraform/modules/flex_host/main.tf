@@ -82,3 +82,16 @@ resource "azurerm_linux_virtual_machine" "this" {
     ignore_changes = [identity]
   }
 }
+
+resource "azurerm_virtual_machine_extension" "nvidia_gpu_driver" {
+  count = var.gpu_driver_enabled ? 1 : 0
+
+  name                       = "NvidiaGpuDriverLinux"
+  virtual_machine_id         = azurerm_linux_virtual_machine.this.id
+  publisher                  = "Microsoft.HpcCompute"
+  type                       = "NvidiaGpuDriverLinux"
+  type_handler_version       = "1.13"
+  auto_upgrade_minor_version = true
+
+  tags = var.tags
+}

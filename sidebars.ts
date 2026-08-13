@@ -10,6 +10,7 @@ const sidebars: SidebarsConfig = {
         id: "ai-workloads-on-aks/aks-flex-anyscale-multi-region",
       },
       items: [
+        "ai-workloads-on-aks/key-concepts",
         "ai-workloads-on-aks/module-01-environment-setup",
         "ai-workloads-on-aks/module-02-aks-foundation",
         "ai-workloads-on-aks/module-03-flex-node",

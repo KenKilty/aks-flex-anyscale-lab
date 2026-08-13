@@ -1,8 +1,8 @@
 ---
 title: "Module 6: Run a Distributed AI Workload"
 sidebar_label: "Module 6: Run the Workload"
-description: Submit a Ray Train workload through Anyscale, inspect its results, and confirm that the worker ran on the Flex node.
-sidebar_position: 7
+description: Submit a Ray Train workload through Anyscale and prove that one GPU worker trained on managed AKS while another trained on Flex.
+sidebar_position: 8
 tags:
   - anyscale
   - ray
@@ -10,26 +10,33 @@ tags:
   - distributed-computing
 ---
 
-In this setup, you will run `deepspeed_finetune`, a Ray Train and DeepSpeed
+In this module, you run `deepspeed_finetune`, a Ray Train and DeepSpeed
 distributed training workload. The Ray head runs on AKS CPU capacity in
-**Region A**, while the worker runs on the Flex node in **Region B**. The workload
-writes the worker hostname, region hint, and device details to
-`workload-summary.json`. You will compare that summary with Kubernetes node,
-node-pool, and region data to confirm exactly where the worker ran.
+**Region A**. CPU mode runs one worker on the Flex node in **Region B**. GPU mode
+runs one worker on the managed AKS GPU pool and one on the Flex node. The command
+joins per-rank loss and CUDA records with Kubernetes placement data so you can
+prove that both GPU nodes trained in the same two-rank world.
+
+Each worker has a rank, which is its index in the training group, as described in
+[Key Concepts](./key-concepts). A two-worker run produces rank 0 and rank 1.
 
 ## What You Will Do
 
 After the readiness checks pass, you will submit the workload through Anyscale
-and watch the Ray head and worker pods land on different parts of the cluster.
-You will inspect the saved summary and Kubernetes placement data instead of
-relying on the Anyscale job status alone.
+and watch the Ray head and two GPU worker pods land on different parts of the
+cluster. You will inspect the saved dual-GPU proof instead of relying only on the
+Anyscale job status or a utilization chart.
 
 ## How the workload runs
 
-Three systems handle the workload before training starts: Anyscale accepts the
-job, the operator creates Kubernetes resources, and the Kubernetes scheduler
-places the Ray pods. The Ray head runs on the AKS CPU pool, while the worker runs
-on the Flex node selected by the compute config.
+Before Anyscale accepts the job, the command reads allocatable CPU and memory
+from the Ready nodes selected for each role. It reserves the headroom described
+in Module 5, caps the request at the smoke workload target, and writes the
+resulting compute config under `.cache/anyscale/compute-configs/`. Anyscale then
+accepts the job, the operator creates Kubernetes resources, and the Kubernetes
+scheduler places the Ray pods. CPU mode creates one Flex worker. GPU mode creates
+one fixed worker group for the managed AKS GPU and one for the Flex GPU. Both
+modes use the same sizing code and Unbounded network path.
 
 <!-- Keep this diagram in sync with assets/architecture/03-workload-execution.mmd. -->
 
@@ -42,39 +49,53 @@ sequenceDiagram
   participant operator as Anyscale operator
   participant api as Kubernetes API
   participant head as Ray head on AKS
-  participant worker as Ray worker on Flex
+  participant managed as GPU worker on managed AKS
+  participant flex as Ray worker on Flex
   participant storage as Azure Blob Storage
 
   learner->>command: Run run-anyscale-workload with CPU or GPU mode
+  command->>api: List Ready nodes and allocatable CPU and memory
+  api-->>command: Return capacity for the selected node pools
+  command->>command: Reserve headroom and write the compute config
   command->>control: Submit compute config and Ray Job
   control->>operator: Reconcile the Anyscale workload
   operator->>api: Create Ray cluster and job resources
   api-->>head: Schedule the head pod in Region A
-  api-->>worker: Schedule the worker pod on aksflexnodes
-  Note over head,worker: Ray traffic crosses managed Cilium and Unbounded pod networks
-  head->>worker: Start distributed training
-  loop Training steps
-    worker-->>head: Return loss and runtime metrics
+  alt CPU mode
+    api-->>flex: Schedule one CPU worker on aksflexnodes
+    head->>flex: Start one-worker CPU training
+    flex-->>head: Return loss and runtime metrics
+  else GPU mode
+    api-->>managed: Schedule one GPU worker in Region A
+    api-->>flex: Schedule one GPU worker on aksflexnodes
+    Note over managed,flex: The same Unbounded network spans AKS and Flex pod traffic
+    head->>managed: Start rank 0 or rank 1
+    head->>flex: Start the other training rank
+    loop Four smoke training steps
+      managed-->>head: Return rank loss and runtime metrics
+      flex-->>head: Return rank loss and runtime metrics
+    end
   end
-  worker->>storage: Write and read workload-summary.json with managed identity
+  head->>storage: Write and read workload-summary.json with managed identity
   command->>control: Poll job state and read driver logs
   control-->>command: Return SUCCEEDED and WORKLOAD_SUMMARY_JSON
   command->>api: Collect Kubernetes pod placement
-  command-->>learner: Save summary and placement files
+  command-->>learner: Save joined dual GPU training proof
 ```
 
 The saved summary shows what the workload reported. The Kubernetes placement
-file independently shows which node ran the worker, so you compare both before
-accepting the result.
+file independently shows where each rank ran. GPU mode accepts the result only
+when the command captures both ready GPU pods running concurrently and joins both
+rank hostnames to those pods.
 
 ## Path differences
 
 | Step | CPU path | GPU path |
 | ------ | ---------- | ------------ |
 | Compute config | Created by `./scripts/run-anyscale-workload.sh --mode cpu` | Created by `./scripts/run-anyscale-workload.sh --mode gpu` |
-| Workers | CPU-only Ray actors on the Flex node | GPU-accelerated Ray Train workers on the Flex node |
-| Results | Placement + loss curve + workload summary | Placement + GPU utilization + loss curve |
-| Duration | ~10 min | ~20-40 min (includes Anyscale cluster startup and CUDA image pull) |
+| Workers | One CPU-only Ray worker on Flex | One managed AKS GPU worker and one Flex GPU worker |
+| Results | Placement + loss + workload summary | Per-rank loss and CUDA data + concurrent placement proof |
+| Duration | ~10 min | ~15-40 min (includes Anyscale cluster startup and CUDA image pull) |
 
 ## Step 1: Verify the Flex workload path
 
@@ -92,28 +113,26 @@ if kubectl get node "$FLEX_NODE" -o json | \
 else
   echo "PASS: broad kubernetes.azure.com/cluster label is absent"
 fi
-kubectl -n kube-system rollout status ds/cilium --timeout=3m
-kubectl -n unbounded-system rollout status ds/unbounded-net-node --timeout=3m
-kubectl -n unbounded-system rollout status ds/unbounded-net-kube-proxy-flex --timeout=3m
+kubectl -n unbounded-system rollout status daemonset/unbounded-net-node --timeout=3m
+kubectl -n unbounded-system rollout status daemonset/unbounded-net-kube-proxy-flex --timeout=3m
 ```
 
 Expected output:
 
 ```text
 PASS: broad kubernetes.azure.com/cluster label is absent
-daemon set "cilium" successfully rolled out
 daemon set "unbounded-net-node" successfully rolled out
 daemon set "unbounded-net-kube-proxy-flex" successfully rolled out
 ```
 
-## Step 2: Choose the run size
+## Step 2: Review the run size
 
-The validated workload wrapper submits the `smoke` profile for both CPU and GPU
-modes. It uses 1 epoch, 4 debug steps, and the worker count selected by the
-wrapper, which keeps the remote run bounded for this lab. The training program
-also supports a longer `full` profile, but the current wrapper does not expose it
-as a student-facing option. Use the documented `--mode cpu` or `--mode gpu`
-commands below without adding a profile argument.
+The workload command submits the `smoke` profile for both CPU and GPU modes,
+which runs 1 epoch and 4 training steps. CPU mode starts one worker. GPU mode
+always starts two workers so each one uses one of the two available GPUs.
+The training program also supports a longer `full` profile, but this lab does not
+expose it. Run the `--mode cpu` or `--mode gpu` commands below without adding a
+profile argument.
 
 ## Step 3: Run the workload locally
 
@@ -123,9 +142,9 @@ Run the workload logic without a cluster:
 ./scripts/run-workload-smoke.sh
 ```
 
-On the first run, the wrapper creates a temporary Python environment and installs
+On the first run, the command creates a temporary Python environment and installs
 the local Torch, DeepSpeed, Ray, and Transformers dependencies. That install can
-take 5-15 minutes, depending on your network and workstation. The wrapper prints
+take 5-15 minutes, depending on your network and workstation. The command prints
 each phase before the workload starts, so active phase output is normal progress
 rather than a stalled run.
 
@@ -154,7 +173,7 @@ snapshots. Remote Anyscale summaries set `local_smoke=false`. The `storage_resul
 field records the account, container, path, and `az://` URI used by the workload,
 confirming that managed identity could write and read the result.
 
-## Step 4: Submit the CPU workload
+## Step 4 (CPU path): Submit the CPU workload
 
 ```bash
 ./scripts/run-anyscale-workload.sh --mode cpu
@@ -172,15 +191,16 @@ info: submit attempt 1/3 for <cpu-job-name>
 
 **Expected CPU placement:** The CPU run places the Ray head on AKS CPU capacity
 in Region A and the Ray worker on the Flex node in Region B. The worker uses
-`ClusterFirst` DNS. Azure CNI Overlay allocates the head address from
-`TF_VAR_cilium_pod_cidr`, while Unbounded allocates the worker address from
+`ClusterFirst` DNS. Unbounded manages the pod networking path across both
+managed AKS and Flex nodes, with the Flex worker address allocated from
 `TF_VAR_unbounded_flex_pod_cidr`.
 
-## GPU path: Submit through Anyscale
+## Step 4 (GPU path): Submit the GPU workload
 
-Run this only after the readiness checks report an allocatable GPU on the Flex
-node. The GPU workload requires a GPU-ready Flex host image with NVIDIA drivers
-and the NVIDIA device plugin installed on the Flex node.
+Skip this section if you are running the CPU path. Run this only after the
+readiness checks report one allocatable GPU on the managed AKS pool and one on
+Flex. The two worker groups use `min_nodes=1` and `max_nodes=1`, so both GPUs are
+claimed before Ray Train starts.
 
 ```bash
 ./scripts/run-anyscale-workload.sh --mode gpu
@@ -190,45 +210,92 @@ Example output includes GPU compute config creation and a worker-startup wait if
 the CUDA image needs to pull on the already provisioned Flex node:
 
 ```text
-(anyscale +<elapsed>) Created compute config: 'gpu-home:<version>'
+(anyscale +<elapsed>) Created compute config: 'gpu-dual-home:<version>'
 info: submit attempt 1/3 for <gpu-job-name>
 (anyscale +<elapsed>) Job '<gpu-job-name>' transitioned from STARTING to RUNNING
 ```
 
 The first GPU run can spend much of the 15-minute worker startup allowance
-pulling the CUDA Ray image. `STARTING` followed by `RUNNING` is normal progress;
-use the job logs and placement checks in the next step if it does not advance.
-The default GPU run starts one `GPU:1` worker. Increase
-`ANYSCALE_RESULTS_GPU_WORKER_COUNT` only when the selected Flex host exposes
-enough GPUs for additional workers. If the GPU worker pod stays Pending because
-its `nvidia.com/gpu.product` selector does not match the Flex node, correct
-`ANYSCALE_RESULTS_GPU_PRODUCT_LABEL` in `.env`, rerun
+pulling the CUDA Ray image on both nodes. `STARTING` followed by `RUNNING` is
+normal progress. Do not change the two-worker count. If a GPU worker pod stays
+Pending, compare its node selector with the managed product label in
+`TF_VAR_gpu_pool_configs` or the Flex label in
+`ANYSCALE_RESULTS_GPU_PRODUCT_LABEL`, rerun
 `./scripts/install-nvidia-device-plugin.sh`, and then rerun
 `./scripts/run-anyscale-workload.sh --mode gpu` so the new compute config version
-uses the updated label. The installer applies that product label after
-confirming `nvidia.com/gpu` is allocatable on the Flex node.
+uses the corrected labels.
 
 ## Step 5: Watch the job and pod placement
 
 Copy the generated job name from the submission output into `JOB_NAME`. Then
 inspect Kubernetes placement, Anyscale state, and driver logs in that order:
 
+First compare the live allocatable values with the generated compute config.
+Set `CONFIG_NAME` to the mode you submitted. The YAML should use CPU and memory
+values no larger than the selected nodes can fit after headroom. A larger SKU
+can keep the workload target, while a smaller SKU produces a lower request.
+
 ```bash
+# Run the assignment that matches the workload you submitted.
+# CPU mode: CONFIG_NAME="cpu-home"
+# GPU mode: CONFIG_NAME="gpu-dual-home"
+CONFIG_NAME="gpu-dual-home"
+
+kubectl get nodes \
+  -o custom-columns='NODE:.metadata.name,POOL:.metadata.labels.agentpool,CPU:.status.allocatable.cpu,MEMORY:.status.allocatable.memory,GPU:.status.allocatable.nvidia\.com/gpu'
+cat ".cache/anyscale/compute-configs/${CONFIG_NAME}.yaml"
+```
+
+The submission output also records each decision:
+
+```text
+info: Ray head uses CPU=<derived-cpu> memory=<derived-memory>Gi from live capacity on agentpool=cpu
+info: Flex CPU worker uses CPU=<derived-cpu> memory=<derived-memory>Gi from live capacity on agentpool=aksflexnodes
+```
+
+GPU mode prints the Ray head plus separate managed and Flex GPU worker lines.
+If no Ready node can meet a role's minimum after headroom, the command stops
+before creating the Anyscale Job and names the undersized role and selector.
+
+```bash
+source .env
 JOB_NAME="<job-name>"
+RG="rg-${TF_VAR_project}-${TF_VAR_environment}-${TF_VAR_region_short}"
+CLOUD="/subscriptions/${TF_VAR_azure_subscription_id}/resourcegroups/${RG}/providers/anyscale.platform/clouds/${TF_VAR_project}-${TF_VAR_environment}-${TF_VAR_region_short}"
 
 kubectl get pods -n anyscale-operator -o wide | grep -E 'NAME|k-'
 ANYSCALE_HOST=https://console.azure.anyscale.com \
-  .venv/bin/anyscale job status --name "$JOB_NAME" --json --verbose
+  .venv/bin/anyscale job status --name "$JOB_NAME" --cloud "$CLOUD" --json --verbose
 ANYSCALE_HOST=https://console.azure.anyscale.com \
-  .venv/bin/anyscale job logs --name "$JOB_NAME" --tail --max-lines 160
+  .venv/bin/anyscale job logs --name "$JOB_NAME" --cloud "$CLOUD" --tail --max-lines 160
 ```
 
-Expected selected-path shape:
+For GPU mode, run this table while the job is `STARTING` or `RUNNING`. Rerun it
+until both named worker groups show `Running`. The compute config requires one
+worker from each group, so a missing row means the two-worker training run is not
+ready yet:
+
+```bash
+kubectl get pods -n anyscale-operator \
+  -l "app.kubernetes.io/name=${JOB_NAME},ray-node-type=worker" \
+  -o custom-columns='WORKER:.metadata.labels.anyscale-node-group-id,STATUS:.status.phase,NODE:.spec.nodeName,GPU:.metadata.labels.anyscale-instance-gpu-count'
+```
+
+Expected GPU placement table:
+
+```text
+WORKER               STATUS    NODE                                  GPU
+managed-gpu-worker   Running   <aks-managed-gpu-node>                1
+flex-gpu-worker      Running   <flex-node>                           1
+```
+
+Expected GPU pod placement:
 
 ```text
 NAME                                      READY   STATUS    NODE
 k-<job-name>-head-abcde                    1/1     Running   <aks-cpu-node-name>
-k-<job-name>-worker-group-0-fghij          1/1     Running   <flex-node-name>
+k-<job-name>-managed-gpu-worker-fghij      1/1     Running   <aks-gpu-node-name>
+k-<job-name>-flex-gpu-worker-klmno         1/1     Running   <flex-node-name>
 
 "state": "SUCCEEDED"
 "WORKLOAD_SUMMARY_JSON={...}"
@@ -276,10 +343,12 @@ Expected `workload-summary.json` shape:
   "local_smoke": false,
   "placement": {
     "expected_regions": ["<region-a>", "<region-b>"],
-    "observed_region_hint": "<region-b>",
-    "observed_node_hint": "<ray-worker-hostname>",
-    "observed_world_size": 1
+    "observed_world_size": 2
   },
+  "worker_training_records": [
+    {"rank": 0, "cuda_available": true, "steps_per_worker": 4, "loss": 10.8},
+    {"rank": 1, "cuda_available": true, "steps_per_worker": 4, "loss": 10.8}
+  ],
   "runtime_versions": {
     "python": "<runtime-version>",
     "ray": "<runtime-version>",
@@ -300,46 +369,56 @@ Expected `workload-summary.json` shape:
 }
 ```
 
-## Step 7: Confirm the worker ran on the Flex node
+## Step 7: Prove both GPU nodes trained
 
-**Workload-reported placement:** Read the summary to confirm the expected regions
-and the managed-identity storage result reported by the training process:
+For CPU mode, inspect the workload summary and placement file as before:
 
 ```bash
 jq '{placement, storage_result}' "$OUT"
 ```
 
-**Kubernetes-observed placement:** Read the separately collected pod record to
-confirm the node, region, agent pool, and Ray node type observed by Kubernetes:
+For GPU mode, validate the dual-GPU proof for the end-to-end training run. This
+is where you confirm that the same job spanned the managed AKS node and the Flex
+node during training instead of just scheduling the pods sequentially:
 
 ```bash
-PLACEMENT=".cache/anyscale/results/${JOB_NAME}-kubernetes-placement.json"
+source .env
+PROOF=".cache/anyscale/results/${JOB_NAME}-dual-gpu-training-proof.json"
 
-jq '.pods[] | {name, pod_ip, node_name, node_region, node_agentpool, ray_node_type}' \
-  "$PLACEMENT"
+kubectl -n anyscale-operator get pods -l "app.kubernetes.io/name=${JOB_NAME}" -o wide
+jq '{status, job_name, world_size, concurrent_observed_at, workers}' "$PROOF"
 ```
+
+Render the saved proof as a table after the job succeeds. This output is the
+screen you can capture for your lab record:
+
+```bash
+jq -r '
+  ["Rank","Node","Region","Pool","GPU","CUDA","Steps","Loss"],
+  (.workers[] | [
+    .rank,
+    .node_name,
+    .node_region,
+    .node_agentpool,
+    .device_name,
+    .cuda_available,
+    .steps_per_worker,
+    .loss
+  ]) | @tsv
+' "$PROOF" | column -t -s $'\t'
+```
+
+The table must contain two ranks. One row must name the managed GPU pool and
+Region A, and the other must name `aksflexnodes` and Region B. Both rows must
+show `true` under `CUDA` and a positive value under `Steps`.
 
 Expected fields:
 
 ```json
-{
-  "placement": {
-    "expected_regions": ["<region-a>", "<region-b>"],
-    "observed_world_size": 1
-  },
-  "storage_result": {
-    "client_id_present": true,
-    "uri": "az://..."
-  }
-}
-{
-  "name": "<worker-pod-name>",
-  "pod_ip": "<worker-pod-ip>",
-  "node_name": "<flex-node-name>",
-  "node_region": "<region-b>",
-  "node_agentpool": "aksflexnodes",
-  "ray_node_type": "worker"
-}
+{"status":"passed","job_name":"<gpu-job-name>","world_size":2,"concurrent_observed_at":"<utc-time>","workers":[
+  {"rank":<rank-on-managed-node>,"cuda_available":true,"device_name":"<gpu>","steps_per_worker":4,"loss":<loss>,"node_name":"<managed-node>","node_region":"<region-a>","node_agentpool":"<managed-gpu-pool>","gpu_requested":1},
+  {"rank":<rank-on-flex-node>,"cuda_available":true,"device_name":"<gpu>","steps_per_worker":4,"loss":<loss>,"node_name":"<flex-node>","node_region":"<region-b>","node_agentpool":"aksflexnodes","gpu_requested":1}
+]}
 ```
 
 Derive the expected region values from `.env` before judging pass/fail:
@@ -349,43 +428,33 @@ source .env
 echo "home=${TF_VAR_azure_location} flex=${TF_VAR_flex_region}"
 ```
 
-Pass means the Ray head ran on Region A AKS capacity, the Ray worker ran on
-`agentpool=aksflexnodes` in Region B, and the collected placement JSON records
-that worker after Kubernetes removes completed pods. Keep that JSON as the saved
-placement record after cleanup.
+Pass means `world_size` is `2`, both ranks report CUDA and completed steps, one
+rank joins to the managed GPU pool in Region A, the other joins to
+`agentpool=aksflexnodes` in Region B, and `concurrent_observed_at` records when
+both ready GPU pods were Running. Ray assigns ranks while the workers start, so
+either rank can run on either GPU node. Keep this proof file after cleanup.
 
-Verify the worker ran on Flex by checking worker log lines for the Ray worker IP,
-then confirm Kubernetes placed that worker pod on the Flex node. The
-worker pod IP comes from the Unbounded Flex pod range (for example
-`10.84.0.0/16`). Unbounded SitePeering carries traffic between that range and
-the managed AKS pod range.
+You can also watch each rank emit its training record while the job runs:
 
 ```bash
 source .env
 export ANYSCALE_HOST="https://console.azure.anyscale.com"
-.venv/bin/anyscale job logs --name "$JOB_NAME" |
-  grep -m1 -oE '\(RayTrainWorker pid=[^)]*\)'
-
-kubectl get pods -n anyscale-operator \
-  -l "app.kubernetes.io/name=$JOB_NAME" \
-  -o wide --show-labels
+RG="rg-${TF_VAR_project}-${TF_VAR_environment}-${TF_VAR_region_short}"
+CLOUD="/subscriptions/${TF_VAR_azure_subscription_id}/resourcegroups/${RG}/providers/anyscale.platform/clouds/${TF_VAR_project}-${TF_VAR_environment}-${TF_VAR_region_short}"
+.venv/bin/anyscale job logs --name "$JOB_NAME" --cloud "$CLOUD" --tail --max-lines 400 |
+  grep 'WORKER_TRAINING_JSON='
 ```
 
 Example output:
 
 ```text
-RayTrainWorker pid=<worker-pid>, ip=<worker-pod-ip>
-<worker-pod-name>   5/5   Running   <worker-pod-ip>   <flex-node-name>   ... ray-node-type=worker
+WORKER_TRAINING_JSON={"rank":0,"world_size":2,"cuda_available":true,"steps_per_worker":4,"loss":<loss>,...}
+WORKER_TRAINING_JSON={"rank":1,"world_size":2,"cuda_available":true,"steps_per_worker":4,"loss":<loss>,...}
 ```
 
-Anyscale may remove the worker pod after the job completes. If the live pod list
-contains only the completed head pod, use the worker entry in the collected
-`<job-name>-kubernetes-placement.json` file above as the placement proof.
-
-The summary check confirms that the remote CPU worker reports the Flex
-region and that Kubernetes placed a worker pod on `agentpool=aksflexnodes`. The
-GPU path also requires `nvidia.com/gpu` allocation. A home-region value by itself
-is not enough to confirm placement.
+Anyscale may remove worker pods after completion. The command samples placement
+every five seconds and retains the concurrent record, so the proof does not
+depend on completed pods remaining in Kubernetes.
 
 ## Troubleshooting
 
@@ -400,11 +469,13 @@ status and logs first:
 source .env
 export ANYSCALE_HOST="https://console.azure.anyscale.com"
 FAILED_JOB="<failed-job-name>"
+RG="rg-${TF_VAR_project}-${TF_VAR_environment}-${TF_VAR_region_short}"
+CLOUD="/subscriptions/${TF_VAR_azure_subscription_id}/resourcegroups/${RG}/providers/anyscale.platform/clouds/${TF_VAR_project}-${TF_VAR_environment}-${TF_VAR_region_short}"
 
-.venv/bin/anyscale job status --name "$FAILED_JOB" --json --verbose \
+.venv/bin/anyscale job status --name "$FAILED_JOB" --cloud "$CLOUD" --json --verbose \
   > ".cache/anyscale/${FAILED_JOB}-failed-status.json"
 
-.venv/bin/anyscale job logs --name "$FAILED_JOB" --tail --max-lines 1000 \
+.venv/bin/anyscale job logs --name "$FAILED_JOB" --cloud "$CLOUD" --tail --max-lines 1000 \
   > ".cache/anyscale/${FAILED_JOB}-failed.log"
 
 kubectl -n anyscale-operator get pods \
@@ -420,12 +491,10 @@ or an object returned through the training status path.
 
 ## Step 8: Optionally inspect the workload in the Anyscale console
 
-The required Module 6 proof is complete after Step 7 shows a valid workload
-summary and Kubernetes placement on the Flex node. You can finish the module
-without screenshots. The optional Anyscale Console tour supplements those files
-with its view of the same run: job state, cluster shape, application logs, and
-live metrics. Capture these screens while the job is still `Running` when you
-can, especially for the GPU path where the metrics panels show GPU use.
+The required Module 6 proof is complete after Step 7 shows both CUDA ranks,
+completed training steps, and concurrent managed/Flex placement. You can finish
+the module without screenshots. The optional Anyscale Console tour supplements
+that file with job state, cluster shape, application logs, and live metrics.
 
 1. Open `https://console.azure.anyscale.com`.
 2. Select the cloud you created. Its name matches the Anyscale Platform cloud in
@@ -443,8 +512,8 @@ data.
 ![Anyscale Jobs list showing completed CPU and GPU jobs](./assets/anyscale-console/jobs-list-results-run.png)
 
 On the **Overview** tab, check the status and the cluster summary. For the GPU
-path, the header should show two nodes and one GPU while the run is active. The
-job details should show the run name, the submitted Ray image, the `gpu-home`
+path, the header should show three nodes and two GPUs while the run is active.
+The job details should show the run name, the submitted Ray image, the `gpu-dual-home`
 compute config, and the full `python train.py ...` entrypoint.
 This screen connects the Anyscale Job to the compute config and container image
 used for the run.
@@ -454,9 +523,9 @@ used for the run.
 Open **Logs**, keep **Application logs** selected, choose the current job attempt,
 and set **Component** to `Driver`. Look for `WORKLOAD_SUMMARY_JSON=`. That line is
 the console-side copy of the summary written under
-`.cache/anyscale/results/`. In the GPU path, the same line should include the Flex
-placement hints, the expected home and Flex regions, `cuda_available=true`, and
-the storage result URI.
+`.cache/anyscale/results/`. In the GPU path, the same log stream should include
+two `WORKER_TRAINING_JSON=` records with ranks `0` and `1`, CUDA enabled, and
+completed step counts.
 
 ![Anyscale Job Logs showing WORKLOAD_SUMMARY_JSON from the GPU workload](./assets/anyscale-console/job-logs-gpu-results.png)
 
@@ -466,16 +535,18 @@ Grafana** from the Metrics page. The direct Grafana page should keep the same
 `ClusterId` as the Anyscale Job session.
 
 On the Grafana overview, check **Node Count** and **Workload Instances**. The GPU
-run should show one head node and one `gpu-worker`. The workload instance IPs
-should match the placement results: the head uses the managed AKS pod CIDR and
-the worker uses the separate Unbounded Flex pod CIDR.
+run should show one head node, one `managed-gpu-worker`, and one
+`flex-gpu-worker`. The workload instance IPs should match the proof: the managed
+pods and Flex worker use the same Unbounded-backed pod path across both node
+domains.
 
 ![Grafana overview showing the Ray head and GPU worker](./assets/anyscale-console/job-metrics-grafana-overview-gpu-results.png)
 
 On the same Grafana dashboard, check **Cluster Utilization**. For the GPU path,
 `GPU (physical)` should rise above idle while the Ray Train worker is running.
-This graph shows that the Flex GPU was used during the workload,
-while the placement JSON shows which node hosted that worker.
+This aggregate graph shows GPU use during the workload. The dual-GPU proof file,
+not the aggregate graph, shows that both node domains trained across the single
+Unbounded network path.
 
 ![Grafana cluster utilization showing GPU activity during the workload](./assets/anyscale-console/job-metrics-grafana-utilization-gpu-results.png)
 
@@ -492,7 +563,7 @@ Record these Console checks with the workload results:
 | Jobs list | `flex-results-cpu-*` and `flex-results-gpu-*` rows | The jobs ran through the Anyscale control plane |
 | Overview | Job status, node/GPU summary, image, compute config, entrypoint | The job used the expected Ray image and compute config |
 | Logs | `WORKLOAD_SUMMARY_JSON=` in Driver logs | The Console contains the same workload summary as the local file |
-| Metrics / Grafana | Node count, workload instances, GPU utilization | The active cluster had a head node, a GPU worker, and non-idle GPU use |
+| Metrics / Grafana | Three nodes, two GPU worker groups, GPU utilization | The active cluster had both GPU capacities while the proof records each rank |
 
 If the Metrics page shows `This job is active, but your browser is unable to
 communicate with it`, run the diagnostic command printed in the warning before
@@ -517,46 +588,39 @@ kubectl get gateway anyscale-gateway -n anyscale-operator \
   -o jsonpath='{.status.addresses[0].value}{"\n"}'
 ```
 
-## Confirm Flex GPU placement
+## Recheck dual GPU placement
 
-After a GPU run, use the placement file to confirm that the Ray GPU worker landed
-on the Flex node:
+After a GPU run, confirm that the saved proof contains exactly the managed GPU
+pool and Flex pool:
 
 ```bash
 source .env
-FLEX_NODE="vm-flex-${TF_VAR_project}-${TF_VAR_environment}-${TF_VAR_flex_region_short}"
 JOB_NAME="<job-name>"
-PLACEMENT=".cache/anyscale/results/${JOB_NAME}-kubernetes-placement.json"
+PROOF=".cache/anyscale/results/${JOB_NAME}-dual-gpu-training-proof.json"
+MANAGED_GPU_POOL="$(jq -r 'to_entries[0].value.name' <<<"$TF_VAR_gpu_pool_configs")"
 
-jq -e --arg node "$FLEX_NODE" --arg region "$TF_VAR_flex_region" '
-  .pods[]
-  | select(.ray_node_type == "worker")
-  | {name,node_name,node_region,node_agentpool}
-  | select(.node_name == $node and .node_region == $region and .node_agentpool == "aksflexnodes")
-' \
-  "$PLACEMENT"
+jq -e --arg managed "$MANAGED_GPU_POOL" '
+  .status == "passed" and
+  .world_size == 2 and
+  ([.workers[].node_agentpool] | sort) == ([$managed, "aksflexnodes"] | sort) and
+  all(.workers[]; .cuda_available and .steps_per_worker > 0 and .gpu_requested == 1)
+' "$PROOF"
 ```
 
 Expected fields:
 
 ```json
-{
-  "name": "k-flex-results-gpu-worker-group-0-fghij",
-  "node_name": "<flex-node-name>",
-  "node_region": "<region-b>",
-  "node_agentpool": "aksflexnodes"
-}
+true
 ```
 
-This example uses the GPU profile selected during environment setup. The command
-derives the expected node and region from your `.env`, so each supported Flex
-profile produces results for its configured environment.
+The command derives the managed pool name from `.env`; it does not assume a VM
+size or GPU product.
 
 ## Success evidence
 
-A successful result includes all three signals: `state=SUCCEEDED`, a valid
-`workload-summary.json`, and Kubernetes placement data showing the worker pod on
-`agentpool=aksflexnodes` in the Flex region.
+A successful GPU result includes all four signals: `state=SUCCEEDED`, two CUDA
+training records, a concurrent two-pod sample, and a joined proof showing one
+worker on the managed GPU pool and one on `agentpool=aksflexnodes`.
 
 ## Next step
 

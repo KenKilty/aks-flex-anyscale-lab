@@ -124,8 +124,8 @@ Confirm the edited text answers these, where they apply:
 - Which command proves it, and what does correct output look like?
 - Which result file should the reader keep?
 - Does the CPU path stay cheap and repeatable?
-- Does the GPU path show that the Ray worker landed on the Flex node rather than an
-  AKS managed GPU node pool?
+- Does the GPU path show one Ray Train worker on the AKS managed GPU pool and one
+  on the Flex node, both participating in the same two-rank training world?
 - Does teardown show that both the Azure resources and the Terraform state are gone?
 - Are every command, path, variable name, and label copied from the scripts or
   Terraform rather than recalled from memory?

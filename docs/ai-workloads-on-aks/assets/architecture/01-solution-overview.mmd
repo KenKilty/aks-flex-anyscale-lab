@@ -1,7 +1,7 @@
 flowchart LR
-  regionA["Region A<br/>AKS cluster and Ray head<br/>Azure CNI Overlay with managed Cilium"]
-  network["Peered Azure networks<br/>Unbounded SitePeering carries pod traffic"]
-  regionB["Region B<br/>Flex node and Ray worker<br/>Unbounded CNI and kube-proxy"]
+  regionA["Region A<br/>AKS head and managed GPU worker<br/>Unbounded pod networking"]
+  network["Peered Azure networks<br/>Unbounded carries pod traffic"]
+  regionB["Region B<br/>Flex node and GPU worker<br/>Unbounded pod networking + kube-proxy"]
 
   regionA <--> network <--> regionB
 

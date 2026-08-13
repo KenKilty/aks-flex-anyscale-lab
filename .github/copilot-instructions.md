@@ -73,6 +73,17 @@ option, or accept a caller-provided host for lab workflows. Never request an
 Anyscale token in chat. Use the CLI credential store populated by
 `.venv/bin/anyscale login` against the Azure host.
 
+Never rely on the organization default cloud. Resolve exactly one cloud by its
+full Azure ARM resource path before a cloud-bound operation, and fail if the
+record is missing, duplicated, or unhealthy. Pass that full name with `--cloud`
+for Job, Service, and Workspace operations and with `--cloud-name` for supported
+compute-config operations. Every compute-config YAML must include the full ARM
+cloud name. Operations on an existing resource may use its immutable `--id`.
+Read-only cloud discovery (`cloud list` and `cloud get-default`) is exempt because
+it does not select a workload target. Do not change the organization default as
+part of a lab deployment or teardown. `scripts/check_anyscale_cloud_scope.py`
+enforces these requirements for shell entrypoints during `scripts/lint.sh`.
+
 The repository's Terraform, `.env` variables, wrapper scripts, and validation
 gates define the deployment contract. They take precedence over generic commands,
 fixed hardware examples, and deployment methods in an official Anyscale skill.
@@ -80,7 +91,13 @@ Derive VM sizes, accelerator types, Kubernetes GPU product labels, and worker
 counts from `.env` and Terraform. Do not introduce a fixed CPU or GPU SKU.
 
 Create the Anyscale cloud through the `Anyscale.Platform` Azure resource
-provider. Bind its `cloudResourceId` to the Anyscale AKS operator extension.
+provider. Terraform must own the parent `Anyscale.Platform/clouds` resource and
+its `cloudResources/default` child as first-class `azapi_resource` objects. Bind
+the child's `cloudResourceId` to the Anyscale AKS operator extension and preserve
+the dependency chain from the Gateway to the extension, child, parent, AKS,
+identity, and storage. Do not move deletion of those Azure resources into shell
+scripts; imperative teardown is limited to Anyscale control-plane preconditions
+that Terraform cannot observe, such as active workloads and system-cluster state.
 The extension's Marketplace `plan` block is part of this RP-bound Anyscale on
 Azure deployment and matches the official Terraform example; it is not the
 unsupported standalone Marketplace onboarding path. Do not deploy the operator
