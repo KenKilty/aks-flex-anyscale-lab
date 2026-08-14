@@ -25,10 +25,10 @@ configs, and workload observability. Together, they let you submit one job while
 Kubernetes places its parts across AKS and Flex.
 
 The lab runs a Ray Train and DeepSpeed fine-tuning demonstration across two
-locations. The Ray head runs on an AKS CPU node in Region A. In GPU mode, one
-training rank runs on a managed AKS GPU node and another runs on a Flex GPU node
-in Region B. You will compare per-rank training records with Kubernetes
-placement.
+locations. The Ray head runs on an AKS CPU node in Region A. Both modes run one
+training rank on managed AKS in Region A and another on Flex in Region B. CPU
+mode uses CPU workers, while GPU mode uses GPU workers. You will compare
+per-rank training records with Kubernetes placement.
 
 This lab creates a repeatable Azure topology. AKS is configured with
 `networkPlugin=none`, so AKS does not install a Container Network Interface
@@ -63,10 +63,10 @@ you begin, even if you have run another AKS lab in the same terminal.
 
 ## Architecture
 
-In this setup, **Region A** hosts the AKS cluster, Ray head pod, and managed GPU
-worker. A
+In this setup, **Region A** hosts the AKS cluster, Ray head pod, and managed CPU
+or GPU worker. A
 reachable Linux host in **Region B** joins that same cluster as an AKS Flex node
-and runs the Ray worker pods. **Anyscale on Azure** submits and observes the
+and runs the second CPU or GPU worker pod. **Anyscale on Azure** submits and observes the
 distributed fine-tuning job, and you'll use Kubernetes placement data (node
 names, node pools, and regions) to see exactly where each pod ran.
 
@@ -76,9 +76,9 @@ names, node pools, and regions) to see exactly where each pod ran.
 
 ```mermaid
 flowchart LR
-  regionA["Region A<br/>AKS head and managed GPU worker<br/>Unbounded pod networking"]
+  regionA["Region A<br/>AKS head and managed CPU or GPU worker<br/>Unbounded pod networking"]
   network["Peered Azure networks<br/>Unbounded carries pod traffic"]
-  regionB["Region B<br/>Flex node and GPU worker<br/>Unbounded pod networking + kube-proxy"]
+  regionB["Region B<br/>Flex node and second CPU or GPU worker<br/>Unbounded pod networking + kube-proxy"]
 
   regionA <--> network <--> regionB
 
@@ -137,7 +137,7 @@ Region A and the two GPU ranks ran on managed AKS and Flex.
 | --- | --- |
 | [Key Concepts](./key-concepts) | Learn what Ray, AKS Flex Node, Anyscale, and Unbounded each contribute, and the terms the modules use. |
 | [1: Prepare Your Environment](./module-01-environment-setup) | Sign in and check the tools and quota you'll need, then choose the CPU or GPU path available in your Azure environment. |
-| [2: Build the AKS Foundation](./module-02-aks-foundation) | Create the AKS cluster, storage, a container registry, the Flex VM, and the cross-region networking between them. |
+| [2: Deploy AKS and Azure Resource](./module-02-aks-foundation) | Create the AKS cluster, storage, a container registry, the Flex VM, and the cross-region networking between them. |
 | [3: Connect a Flex Node](./module-03-flex-node) | Join the provisioned VM to your AKS cluster as a Flex node, and verify that pods can communicate across both regions. |
 | [4: Connect Anyscale](./module-04-anyscale-binding) | Add the Anyscale cloud, deploy the Anyscale operator, and configure the Gateway so you can submit and observe Ray Jobs. |
 | [5: Review Scaling and Readiness](./module-05-autoscaling) | Inspect AKS scaling behavior, confirm Flex networking is working, and verify that the cluster is ready for the distributed workload. |

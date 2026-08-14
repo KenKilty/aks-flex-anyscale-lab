@@ -32,12 +32,12 @@ variables {
   }
   flex_vnet_address_space = ["10.60.0.0/16"]
   flex_subnet_cidr        = "10.60.1.0/24"
-  cilium_pod_cidr         = "10.83.0.0/16"
+  aks_pod_cidr            = "10.83.0.0/16"
   unbounded_flex_pod_cidr = "10.84.0.0/16"
   dns_forwarding_rules    = {}
 
   system_vm_size             = "Standard_D4s_v5"
-  cpu_vm_size                = "Standard_D16s_v5"
+  cpu_vm_size                = "Standard_D4s_v5"
   availability_zones         = ["1", "2", "3"]
   aks_sku_tier               = "Standard"
   system_node_pool_min_count = 1

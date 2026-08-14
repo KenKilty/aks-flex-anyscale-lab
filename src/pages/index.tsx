@@ -6,7 +6,7 @@ export default function Home(): React.JSX.Element {
   return (
     <Layout
       title="Run AI Where Your GPUs Are"
-      description="Build a multi-region AKS environment, connect a Flex node, and run a Ray workload through Anyscale on Azure."
+      description="Connect computing power in two Azure regions, run a small distributed AI training job, and prove where the work ran."
     >
       <header
         style={{
@@ -27,21 +27,49 @@ export default function Home(): React.JSX.Element {
             opacity: 0.9,
           }}
         >
-          In this hands-on lab, you connect Linux compute in another Azure
-          region to an AKS cluster with <strong>AKS Flex Node</strong>. You then
-          use <strong>Anyscale on Azure</strong> to run a Ray workload across
-          the AKS and Flex nodes and confirm where each part of the job ran.
+          Learn how one AI training job can share work between machines in two
+          Azure regions. You will connect an extra Linux machine to Azure
+          Kubernetes Service (AKS), run a small model-training exercise across
+          both locations, and prove which machines did the work. No prior
+          experience with Ray, Kubernetes, or Anyscale is required.
         </p>
-        <Link
-          className="button button--secondary button--lg"
-          to="/docs/ai-workloads-on-aks/aks-flex-anyscale-multi-region"
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: "0.75rem",
+            justifyContent: "center",
+          }}
         >
-          Start the lab, about 75 min
-        </Link>
+          <Link
+            className="button button--secondary button--lg"
+            to="/docs/ai-workloads-on-aks/aks-flex-anyscale-multi-region"
+          >
+            Start the lab, about 75 min
+          </Link>
+          <Link
+            className="button button--outline button--secondary button--lg"
+            to="/docs/ai-workloads-on-aks/key-concepts"
+          >
+            Read the key concepts
+          </Link>
+        </div>
       </header>
 
       <main style={{ margin: "0 auto", maxWidth: 960, padding: "3rem 1.5rem" }}>
+        <h2 style={{ marginTop: 0, textAlign: "center" }}>What you will do</h2>
+        <p
+          style={{
+            margin: "0 auto 2rem",
+            maxWidth: 680,
+            textAlign: "center",
+          }}
+        >
+          Build the two-location environment, run a real but intentionally small
+          training exercise, and collect evidence that shows where the work ran.
+        </p>
         <section
+          aria-label="Lab activities"
           style={{
             display: "grid",
             gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
@@ -50,19 +78,19 @@ export default function Home(): React.JSX.Element {
         >
           {[
             {
-              title: "Build the foundation",
+              title: "Create the home base",
               body:
-                "Create an AKS cluster in one Azure region and prepare secure network connectivity to a second region.",
+                "Create Azure Kubernetes Service (AKS) in one region. It acts as the home base that coordinates the training job.",
             },
             {
-              title: "Connect a Flex node",
+              title: "Add a machine in another region",
               body:
-                "Join a Linux VM to the cluster, verify pod networking and DNS, and make the node available for workloads.",
+                "Connect a Linux virtual machine in a second region with AKS Flex Node, then check that it can communicate with the home cluster.",
             },
             {
-              title: "Run and verify a Ray job",
+              title: "Train across both locations",
               body:
-                "Submit a job through Anyscale, confirm the worker ran on the Flex node, and save the workload and storage results.",
+                "Use Anyscale to submit the training exercise, then compare its results with records showing which machine ran each part.",
             },
           ].map(({ title, body }) => (
             <div

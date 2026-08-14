@@ -29,6 +29,11 @@ tfplan*
 
 # Local GitHub Copilot skills and hooks
 .github/
+!.github/
+.github/*
+!.github/prompts/
+.github/prompts/*
+!.github/prompts/browser-led-student-lab.prompt.md
 .githooks/
 
 # Local agent and test notes

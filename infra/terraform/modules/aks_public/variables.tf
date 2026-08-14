@@ -31,7 +31,7 @@ variable "nodes_subnet_id" {
   type = string
 }
 
-variable "cilium_pod_cidr" {
+variable "aks_pod_cidr" {
   description = "Pod CIDR allocated to AKS-managed nodes for the no-CNI Unbounded lab flow."
   type        = string
 }

@@ -1,0 +1,29 @@
+flowchart LR
+  subgraph regionA["Region A - AKS home region"]
+    direction TB
+    aks["AKS cluster<br/>Managed node pools"]
+    services["Shared Azure services<br/>Blob Storage, ACR, Log Analytics"]
+    vnetA["AKS virtual network"]
+
+    aks --- vnetA
+    services --- vnetA
+  end
+
+  subgraph regionB["Region B - Flex host region"]
+    direction TB
+    flexVm["Linux VM<br/>Later in Module 3: Flex node"]
+    vnetB["Flex virtual network"]
+
+    flexVm --- vnetB
+  end
+
+  vnetA <-->|Two-way VNet peering| vnetB
+
+  classDef home fill:#e0f2fe,stroke:#0369a1,color:#082f49,font-size:18px
+  classDef shared fill:#fef3c7,stroke:#b45309,color:#451a03,font-size:18px
+  classDef flex fill:#dcfce7,stroke:#15803d,color:#052e16,font-size:18px
+  class aks,vnetA home
+  class services shared
+  class flexVm,vnetB flex
+  style regionA fill:#f0f9ff,stroke:#0284c7,stroke-width:2px,color:#082f49
+  style regionB fill:#f0fdf4,stroke:#16a34a,stroke-width:2px,color:#052e16

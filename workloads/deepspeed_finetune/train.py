@@ -561,7 +561,11 @@ def main() -> None:
     )
 
     train_config = build_train_config(args)
-    scaling_config = ScalingConfig(num_workers=args.num_workers, use_gpu=not args.cpu_only)
+    scaling_config = ScalingConfig(
+        num_workers=args.num_workers,
+        use_gpu=not args.cpu_only,
+        placement_strategy="SPREAD",
+    )
     if args.enable_checkpoints:
         Path(args.storage_path).mkdir(parents=True, exist_ok=True)
         run_config = RunConfig(storage_path=args.storage_path, name=args.run_id)

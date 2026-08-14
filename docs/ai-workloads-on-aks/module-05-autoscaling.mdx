@@ -52,7 +52,7 @@ claiming all capacity on a larger VM:
 | Role | CPU target | Memory target | Minimum after headroom |
 | --- | --- | --- | --- |
 | Ray head, both paths | 2 | `8Gi` | 1 CPU and `4Gi` |
-| Flex CPU worker | 2 | `8Gi` | 1 CPU and `4Gi` |
+| Managed and Flex CPU workers | 2 | `8Gi` | 1 CPU and `4Gi` |
 | Managed and Flex GPU workers | 4 | `16Gi` | 1 CPU and `8Gi` |
 
 If the live capacity falls below a minimum, the workload command stops before it
@@ -81,18 +81,18 @@ az aks nodepool list \
   -o table
 ```
 
-Example output:
+This CPU run used the shared worker SKU selected in Module 1 and printed:
 
 ```text
-Name    VmSize            Count    MinCount    MaxCount    Mode
-------  ----------------  -------  ----------  ----------  ------
-sys     <system-vm-size>  1        <min>       <max>       System
-cpu     <cpu-vm-size>     1        <min>       <max>       User
+Name    VmSize             Count    MinCount    MaxCount    Mode
+------  -----------------  -------  ----------  ----------  ------
+sys     Standard_D4s_v5    1        1           3           System
+cpu     Standard_D4ads_v6  1        1           4           User
 ```
 
 Compare the live `VmSize`, `MinCount`, and `MaxCount` values with the system and
 CPU pool settings in `.env`. Those selected sizes and upper bounds, not the
-example values above, determine the Region A quota required by this environment.
+example values above, determine the Region A quota required by your environment.
 
 ## Step 2: Review the CPU or GPU capacity profile
 
@@ -102,12 +102,15 @@ example values above, determine the Region A quota required by this environment.
 grep -E '^(TF_VAR_cpu_vm_size|TF_VAR_gpu_pool_configs)=' .env
 ```
 
-Expected fields:
+For the same CPU run, the active fields were:
 
 ```text
-TF_VAR_cpu_vm_size="<selected-cpu-vm-size>"
+TF_VAR_cpu_vm_size="Standard_D4ads_v6"
 TF_VAR_gpu_pool_configs='{}'
 ```
+
+Your CPU VM size can differ based on the shared candidate you selected in
+Module 1.
 
 Use the live pool table from Step 1 to read the minimum and maximum node counts.
 The CPU VM size in `.env` provides the resources for the Ray head, and the Module
@@ -140,6 +143,16 @@ creates the Anyscale compute config.
 ```bash
 kubectl get nodes \
   -o custom-columns='NODE:.metadata.name,POOL:.metadata.labels.agentpool,READY:.status.conditions[?(@.type=="Ready")].status,CPU:.status.allocatable.cpu,MEMORY:.status.allocatable.memory,GPU:.status.allocatable.nvidia\.com/gpu'
+```
+
+The live CPU run showed one managed CPU node, one system node, and one Flex
+node. Node suffixes and memory reservations can differ in your cluster:
+
+```text
+NODE                          POOL           READY   CPU     MEMORY       GPU
+aks-cpu-13577184-vmss000000   cpu            True    3860m   12073732Ki   <none>
+aks-sys-33810774-vmss000000   sys            True    3860m   12072716Ki   <none>
+vm-flex-flexany-e2e814-scus   aksflexnodes   True    3860m   13967052Ki   <none>
 ```
 
 Every node used by your selected path should show `True` under `READY`. The CPU
@@ -219,19 +232,21 @@ traffic in both directions, and the Anyscale extension and Gateway:
 ./scripts/validate-lab.sh m5
 ```
 
-Expected output:
+The live CPU run printed this readiness summary. Your Flex node name and Gateway
+address will differ:
 
 ```text
 PASS M5-01 CPU node pool autoscaling configured
 SKIP M5-02 GPU path disabled in current env profile
+PASS AKS no-CNI network profile is active; podCidr=10.244.0.0/16
 PASS AKS no-CNI path is active for the Unbounded lab flow
-PASS Flex node <flex-node-name> Ready in <region-b>
+PASS Flex node vm-flex-flexany-e2e814-scus Ready in southcentralus
 PASS Unbounded owns the no-CNI AKS and Flex networking path
 PASS Flex ClusterFirst DNS resolves Anyscale and Kubernetes service names
 PASS Flex pod HTTPS egress reaches console.azure.anyscale.com
 PASS Unbounded connectivity: bilateral pod traffic and ClusterIP routing from AKS and Flex
 PASS Anyscale extension and operator pods ready
-PASS Gateway anyscale-operator/anyscale-gateway programmed at <gateway-address>
+PASS Gateway anyscale-operator/anyscale-gateway programmed at 20.80.176.35
 ```
 
 The command writes pod logs and Kubernetes JSON under
@@ -263,17 +278,24 @@ az k8s-extension show \
 kubectl get pods,gateway -n anyscale-operator -o wide
 ```
 
-Example output:
+The live service check showed extension version `1.7.1`, a healthy three-container
+operator pod, two Gateway proxy pods, and a programmed Gateway. Pod suffixes,
+addresses, and ages change between deployments:
 
 ```text
 {
+  "currentVersion": "1.7.1",
   "name": "anyscale-operator",
-  "provisioningState": "Succeeded",
-  "currentVersion": "<installed-version>"
+  "provisioningState": "Succeeded"
 }
 
-pod/anyscale-operator-<pod-suffix>   3/3   Running
-gateway.gateway.networking.k8s.io/anyscale-gateway   approuting-istio   <gateway-address>   True
+NAME                                                     READY   STATUS
+pod/anyscale-gateway-approuting-istio-7cbb874b75-4wppr   1/1     Running
+pod/anyscale-gateway-approuting-istio-7cbb874b75-9jmc7   1/1     Running
+pod/anyscale-operator-5978b9674b-fmcbm                   3/3     Running
+
+NAME                                                 CLASS              ADDRESS        PROGRAMMED
+gateway.gateway.networking.k8s.io/anyscale-gateway   approuting-istio   20.80.176.35   True
 ```
 
 :::warning Resolve failed checks before continuing
@@ -292,10 +314,15 @@ kubectl get pods -A -o wide --field-selector spec.nodeName="$FLEX_NODE"
 CPU path example output:
 
 ```text
-NAMESPACE          NAME                                      READY   STATUS    NODE
-unbounded-system   unbounded-net-node-abcde                  1/1     Running   <flex-node-name>
-unbounded-system   unbounded-net-kube-proxy-flex-abcde       1/1     Running   <flex-node-name>
+NAMESPACE          NAME                                  READY   STATUS    NODE
+unbounded-system   unbounded-net-kube-proxy-flex-vqjt4   1/1     Running   vm-flex-flexany-e2e814-scus
+unbounded-system   unbounded-net-node-75nwb              1/1     Running   vm-flex-flexany-e2e814-scus
 ```
+
+Your pod suffixes and Flex node name will differ. If the listing immediately
+after `validate-lab.sh m5` also shows a diagnostic route pod in `Terminating`,
+rerun the listing. Continue when cleanup finishes and only the expected system
+pods remain.
 
 The GPU path also includes the NVIDIA device-plugin pod installed in Step 4:
 
@@ -309,7 +336,7 @@ plugin. No AKS-managed networking daemon set should run on the Flex node. Any
 application or prior Ray workload pod is left over from an earlier run and should
 finish or be removed before you continue.
 
-## Success evidence
+## Validate cluster readiness
 
 You can move on when `./scripts/validate-lab.sh m5` prints `PASS` for the
 CPU scale profile, Flex node readiness, Flex DNS, Flex HTTPS egress, AKS-to-Flex

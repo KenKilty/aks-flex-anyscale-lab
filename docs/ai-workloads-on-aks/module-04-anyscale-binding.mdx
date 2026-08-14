@@ -322,7 +322,7 @@ The distributed Ray job uses this placement:
 | Step | CPU path | GPU path |
 | --- | --- | --- |
 | Head pod | AKS CPU node in Region A | AKS CPU node in Region A |
-| Worker pod | Flex node `agentpool=aksflexnodes` in Region B | One worker on the managed GPU pool in Region A and one on `agentpool=aksflexnodes` in Region B |
+| Worker pods | One on the managed CPU pool in Region A and one on `agentpool=aksflexnodes` in Region B | One on the managed GPU pool in Region A and one on `agentpool=aksflexnodes` in Region B |
 | DNS policy | Normal `ClusterFirst` | Normal `ClusterFirst` after GPU enablement |
 
 Do not submit the workload until the AKS network profile, Flex networking, the
@@ -333,7 +333,7 @@ For the GPU path, continue only after you confirm quota for both GPU VM sizes in
 `.env` and the readiness checks show one allocatable `nvidia.com/gpu` resource
 on the managed pool and one on the Flex node.
 
-## Success evidence
+## Validate the Anyscale connection
 
 You can move on when the `Anyscale.Platform` resource provider is registered, the
 Anyscale cloud is visible to the authenticated CLI with the expected Azure and

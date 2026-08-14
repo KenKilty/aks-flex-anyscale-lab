@@ -5,7 +5,7 @@ locals {
 resource "terraform_data" "managed_cni_ready" {
   triggers_replace = [
     module.aks.aks_provisioning_validation,
-    var.cilium_pod_cidr,
+    var.aks_pod_cidr,
   ]
 
   provisioner "local-exec" {
@@ -14,7 +14,7 @@ resource "terraform_data" "managed_cni_ready" {
     environment = {
       AKS_CLUSTER_NAME   = module.aks.cluster_name
       AKS_RESOURCE_GROUP = azurerm_resource_group.this.name
-      AKS_POD_CIDR       = var.cilium_pod_cidr
+      AKS_POD_CIDR       = var.aks_pod_cidr
     }
 
     command = <<-EOT

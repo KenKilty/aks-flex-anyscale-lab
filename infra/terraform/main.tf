@@ -94,7 +94,7 @@ module "aks" {
   dns_prefix      = local.names.aks_dns_prefix
 
   nodes_subnet_id            = module.network.subnet_ids.aks_nodes
-  cilium_pod_cidr            = var.cilium_pod_cidr
+  aks_pod_cidr               = var.aks_pod_cidr
   service_cidr               = var.service_cidr
   dns_service_ip             = var.dns_service_ip
   kubernetes_version         = var.kubernetes_version

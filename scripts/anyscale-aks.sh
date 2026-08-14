@@ -9,7 +9,8 @@ Usage: ./scripts/anyscale-aks.sh COMMAND
 
 Commands:
   bootstrap        Create local config and install the Anyscale CLI environment.
-  doctor           Check local dependencies and Azure CLI context.
+  sku-options      List shared cross-region VM SKUs with available quota.
+  doctor           Check local tools, Azure access, and configured VM quota.
   status           Show Azure context and current Terraform outputs.
   render-tfvars    Render infra/terraform/terraform.auto.tfvars.json from .env.
   init             Run terraform init.
@@ -32,7 +33,7 @@ USAGE
 command="${1:-}"
 
 case "${command}" in
-bootstrap | doctor | status | render-tfvars | init | validate | test | plan | apply | destroy | output | flex-config | flex-bootstrap)
+bootstrap | sku-options | doctor | status | render-tfvars | init | validate | test | plan | apply | destroy | output | flex-config | flex-bootstrap)
   exec "${SCRIPT_DIR}/setup.sh" "$@"
   ;;
 "" | -h | --help | help)

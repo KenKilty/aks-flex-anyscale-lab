@@ -54,10 +54,11 @@ bootstrap() {
   awk \
     -v subscription_id="${subscription_id}" \
     -v tenant_id="${tenant_id}" '
-      /^ARM_SUBSCRIPTION_ID=/ { print "ARM_SUBSCRIPTION_ID=\"" subscription_id "\""; next }
-      /^ARM_TENANT_ID=/ { print "ARM_TENANT_ID=\"" tenant_id "\""; next }
+      /^ARM_SUBSCRIPTION_ID=/ { next }
+      /^ARM_TENANT_ID=/ { next }
       /^TF_VAR_azure_subscription_id=/ { print "TF_VAR_azure_subscription_id=\"" subscription_id "\""; next }
       /^TF_VAR_azure_tenant_id=/ { print "TF_VAR_azure_tenant_id=\"" tenant_id "\""; next }
+      /^TF_VAR_cilium_pod_cidr=/ { sub(/^TF_VAR_cilium_pod_cidr=/, "TF_VAR_aks_pod_cidr="); print; next }
       { print }
     ' "${ENV_FILE}" >"${env_tmp}"
   mv "${env_tmp}" "${ENV_FILE}"
@@ -81,7 +82,7 @@ bootstrap() {
   printf 'azure subscription: %s\n' "${subscription_id}"
   printf 'azure tenant: %s\n' "${tenant_id}"
   printf 'Anyscale CLI: %s\n' "${ANYSCALE_VENV_DIR}/bin/anyscale"
-  printf 'next: ./scripts/anyscale-aks.sh doctor\n'
+  printf 'next: choose Region A and Region B, then run ./scripts/anyscale-aks.sh sku-options <region-a> <region-b> cpu|gpu\n'
 }
 
 resource_group_name() {
@@ -138,7 +139,6 @@ ensure_defaults() {
   [[ -n "${TF_VAR_anyscale_gateway_name:-}" ]] || TF_VAR_anyscale_gateway_name="anyscale-gateway"
   [[ -n "${TF_VAR_anyscale_gateway_hostname:-}" ]] || TF_VAR_anyscale_gateway_hostname=""
   [[ -n "${TF_VAR_flex_host_enabled:-}" ]] || TF_VAR_flex_host_enabled="true"
-  [[ -n "${TF_VAR_flex_host_vm_size:-}" ]] || TF_VAR_flex_host_vm_size="Standard_D4s_v5"
   [[ -n "${TF_VAR_flex_host_admin_username:-}" ]] || TF_VAR_flex_host_admin_username="azureoperator"
   [[ -n "${TF_VAR_flex_host_public_ip_enabled:-}" ]] || TF_VAR_flex_host_public_ip_enabled="true"
   [[ -n "${TF_VAR_flex_host_secondary_ip_configurations:-}" ]] || TF_VAR_flex_host_secondary_ip_configurations="[]"
@@ -146,7 +146,7 @@ ensure_defaults() {
   [[ -n "${TF_VAR_flex_host_os_disk_size_gb:-}" ]] || TF_VAR_flex_host_os_disk_size_gb="256"
   [[ -n "${TF_VAR_flex_host_source_image_reference:-}" ]] || TF_VAR_flex_host_source_image_reference='{"publisher":"Canonical","offer":"ubuntu-24_04-lts","sku":"server","version":"latest"}'
   grep -q 'ubuntu-24_04-lts' <<<"${TF_VAR_flex_host_source_image_reference}" || die "Flex host image must remain Ubuntu 24.04 to match the upstream AKS Flex Node guidance. Update TF_VAR_flex_host_source_image_reference in .env."
-  [[ -n "${TF_VAR_cilium_pod_cidr:-}" ]] || TF_VAR_cilium_pod_cidr="10.83.0.0/16"
+  [[ -n "${TF_VAR_aks_pod_cidr:-}" ]] || TF_VAR_aks_pod_cidr="10.83.0.0/16"
   [[ -n "${TF_VAR_unbounded_flex_pod_cidr:-}" ]] || TF_VAR_unbounded_flex_pod_cidr="10.84.0.0/16"
 
   if [[ "${TF_VAR_flex_host_enabled}" == "true" && -z "${TF_VAR_flex_host_admin_ssh_public_key:-}" ]]; then
@@ -169,7 +169,7 @@ ensure_defaults() {
   export TF_VAR_flex_host_os_disk_size_gb
   export TF_VAR_flex_host_source_image_reference
   export TF_VAR_flex_host_admin_ssh_public_key
-  export TF_VAR_cilium_pod_cidr
+  export TF_VAR_aks_pod_cidr
   export TF_VAR_unbounded_flex_pod_cidr
 }
 
@@ -180,10 +180,11 @@ sync_azure_context() {
   subscription_id="$(jq -r '.id' <<<"${account_json}")"
   tenant_id="$(jq -r '.tenantId' <<<"${account_json}")"
 
-  [[ -n "${ARM_SUBSCRIPTION_ID:-}" && "${ARM_SUBSCRIPTION_ID}" != "00000000-0000-0000-0000-000000000000" ]] || ARM_SUBSCRIPTION_ID="${subscription_id}"
-  [[ -n "${ARM_TENANT_ID:-}" && "${ARM_TENANT_ID}" != "00000000-0000-0000-0000-000000000000" ]] || ARM_TENANT_ID="${tenant_id}"
   [[ -n "${TF_VAR_azure_subscription_id:-}" && "${TF_VAR_azure_subscription_id}" != "00000000-0000-0000-0000-000000000000" ]] || TF_VAR_azure_subscription_id="${subscription_id}"
   [[ -n "${TF_VAR_azure_tenant_id:-}" && "${TF_VAR_azure_tenant_id}" != "00000000-0000-0000-0000-000000000000" ]] || TF_VAR_azure_tenant_id="${tenant_id}"
+
+  ARM_SUBSCRIPTION_ID="${TF_VAR_azure_subscription_id}"
+  ARM_TENANT_ID="${TF_VAR_azure_tenant_id}"
 
   export ARM_SUBSCRIPTION_ID ARM_TENANT_ID TF_VAR_azure_subscription_id TF_VAR_azure_tenant_id
 }
@@ -196,7 +197,7 @@ validate_network_cidrs() {
       "${TF_VAR_vnet_address_space}" \
       "${TF_VAR_flex_vnet_address_space}" \
       "${TF_VAR_service_cidr}" \
-      "${TF_VAR_cilium_pod_cidr}" \
+      "${TF_VAR_aks_pod_cidr}" \
       "${TF_VAR_unbounded_flex_pod_cidr}" <<'PY'
 import ipaddress
 import itertools
@@ -257,7 +258,7 @@ render_tfvars() {
     TF_VAR_anyscale_operator_identity
     TF_VAR_vnet_address_space
     TF_VAR_subnet_cidrs
-    TF_VAR_cilium_pod_cidr
+    TF_VAR_aks_pod_cidr
     TF_VAR_unbounded_flex_pod_cidr
     TF_VAR_flex_vnet_address_space
     TF_VAR_flex_subnet_cidr
@@ -322,7 +323,7 @@ render_tfvars() {
     --arg container_insights_data_collection_interval "${TF_VAR_container_insights_data_collection_interval}" \
     --arg container_insights_namespace_filtering_mode "${TF_VAR_container_insights_namespace_filtering_mode}" \
     --arg flex_subnet_cidr "${TF_VAR_flex_subnet_cidr}" \
-    --arg cilium_pod_cidr "${TF_VAR_cilium_pod_cidr}" \
+    --arg aks_pod_cidr "${TF_VAR_aks_pod_cidr}" \
     --arg unbounded_flex_pod_cidr "${TF_VAR_unbounded_flex_pod_cidr}" \
     --argjson anyscale_operator_identity "${TF_VAR_anyscale_operator_identity}" \
     --argjson anyscale_enabled "${TF_VAR_anyscale_enabled}" \
@@ -395,7 +396,7 @@ render_tfvars() {
       subnet_cidrs: $subnet_cidrs,
       flex_vnet_address_space: $flex_vnet_address_space,
       flex_subnet_cidr: $flex_subnet_cidr,
-      cilium_pod_cidr: $cilium_pod_cidr,
+      aks_pod_cidr: $aks_pod_cidr,
       unbounded_flex_pod_cidr: $unbounded_flex_pod_cidr,
       dns_forwarding_rules: $dns_forwarding_rules,
       availability_zones: $availability_zones,
@@ -743,10 +744,12 @@ reuse_existing_anyscale_default_admin_assignment() {
   [[ "${enabled}" == "true" && "${principal_type}" == "User" && "${scope}" == "subscription" ]] || return 0
   [[ "${role_name}" == "Anyscale Platform Administrator" || "${role_name}" == "Anyscale Platform Administrator Role" ]] || return 0
 
-  principal_id="$(az ad signed-in-user show --query id -o tsv --only-show-errors)"
+  principal_id="$(printf '%s\n' 'data.azurerm_client_config.current.object_id' | terraform_cmd console | tr -d '"')"
+  [[ "${principal_id}" =~ ^[0-9a-fA-F-]{36}$ ]] || die "unable to resolve the current Azure principal from Terraform client configuration"
   assignment_id="$(az role assignment list \
-    --assignee "${principal_id}" \
+    --assignee-object-id "${principal_id}" \
     --scope "/subscriptions/${TF_VAR_azure_subscription_id}" \
+    --fill-principal-name false \
     --query "[?scope=='/subscriptions/${TF_VAR_azure_subscription_id}' && (roleDefinitionName=='Anyscale Platform Administrator' || roleDefinitionName=='Anyscale Platform Administrator Role')].id | [0]" \
     -o tsv \
     --only-show-errors)"
@@ -1229,21 +1232,17 @@ doctor_check_host() {
 }
 
 doctor_check_azure_context() {
-  local account_json subscription_id tenant_id variable_name
+  local account_json subscription_id tenant_id
 
   account_json="$(az account show -o json --only-show-errors)" ||
     die "Azure CLI is not authenticated; run az login"
   subscription_id="$(jq -r '.id' <<<"${account_json}")"
   tenant_id="$(jq -r '.tenantId' <<<"${account_json}")"
 
-  for variable_name in ARM_SUBSCRIPTION_ID TF_VAR_azure_subscription_id; do
-    [[ "${!variable_name:-}" == "${subscription_id}" ]] ||
-      die "${variable_name} does not match Azure CLI subscription ${subscription_id}; rerun bootstrap or correct ${ENV_FILE}"
-  done
-  for variable_name in ARM_TENANT_ID TF_VAR_azure_tenant_id; do
-    [[ "${!variable_name:-}" == "${tenant_id}" ]] ||
-      die "${variable_name} does not match Azure CLI tenant ${tenant_id}; rerun bootstrap or correct ${ENV_FILE}"
-  done
+  [[ "${TF_VAR_azure_subscription_id:-}" == "${subscription_id}" ]] ||
+    die "TF_VAR_azure_subscription_id does not match Azure CLI subscription ${subscription_id}; rerun bootstrap or correct ${ENV_FILE}"
+  [[ "${TF_VAR_azure_tenant_id:-}" == "${tenant_id}" ]] ||
+    die "TF_VAR_azure_tenant_id does not match Azure CLI tenant ${tenant_id}; rerun bootstrap or correct ${ENV_FILE}"
 
   doctor_pass "Azure CLI subscription and tenant match ${ENV_FILE}"
   jq '{subscription:.id,tenant:.tenantId,user:.user.name}' <<<"${account_json}"
@@ -1264,7 +1263,7 @@ doctor_check_env() {
     TF_VAR_vnet_address_space
     TF_VAR_flex_vnet_address_space
     TF_VAR_service_cidr
-    TF_VAR_cilium_pod_cidr
+    TF_VAR_aks_pod_cidr
     TF_VAR_unbounded_flex_pod_cidr
   )
   local variable_name
@@ -1274,10 +1273,29 @@ doctor_check_env() {
   done
   jq -e 'type == "object"' <<<"${TF_VAR_gpu_pool_configs}" >/dev/null ||
     die "TF_VAR_gpu_pool_configs must be a JSON object in ${ENV_FILE}"
-  [[ "${TF_VAR_region_short}" =~ ^[a-z0-9]+$ ]] ||
-    die "TF_VAR_region_short must contain only lowercase letters and numbers"
-  [[ "${TF_VAR_flex_region_short}" =~ ^[a-z0-9]+$ ]] ||
-    die "TF_VAR_flex_region_short must contain only lowercase letters and numbers"
+  local gpu_pool_count gpu_vm_size
+  gpu_pool_count="$(jq 'length' <<<"${TF_VAR_gpu_pool_configs}")"
+  if ((gpu_pool_count == 0)); then
+    [[ "${ANYSCALE_FLEX_GPU_ENABLED:-false}" == "false" ]] ||
+      die "ANYSCALE_FLEX_GPU_ENABLED must be false when TF_VAR_gpu_pool_configs is empty"
+    [[ "${TF_VAR_cpu_vm_size}" == "${TF_VAR_flex_host_vm_size}" ]] ||
+      die "CPU mode requires TF_VAR_cpu_vm_size and TF_VAR_flex_host_vm_size to use the same SKU"
+  else
+    ((gpu_pool_count == 1)) || die "GPU mode requires exactly one entry in TF_VAR_gpu_pool_configs"
+    [[ "${ANYSCALE_FLEX_GPU_ENABLED:-false}" == "true" ]] ||
+      die "ANYSCALE_FLEX_GPU_ENABLED must be true when TF_VAR_gpu_pool_configs is configured"
+    gpu_vm_size="$(jq -r 'to_entries[0].value.vm_size // empty' <<<"${TF_VAR_gpu_pool_configs}")"
+    [[ -n "${gpu_vm_size}" && "${gpu_vm_size}" == "${TF_VAR_flex_host_vm_size}" ]] ||
+      die "GPU mode requires the Region A GPU pool and Region B Flex host to use the same VM SKU"
+  fi
+  [[ "${TF_VAR_region_short}" =~ ^[a-z0-9]{2,8}$ ]] ||
+    die "TF_VAR_region_short must contain 2-8 lowercase letters and numbers"
+  [[ "${TF_VAR_region_short}" != "${TF_VAR_azure_location}" ]] ||
+    die "TF_VAR_region_short must abbreviate TF_VAR_azure_location, not repeat it"
+  [[ "${TF_VAR_flex_region_short}" =~ ^[a-z0-9]{2,8}$ ]] ||
+    die "TF_VAR_flex_region_short must contain 2-8 lowercase letters and numbers"
+  [[ "${TF_VAR_flex_region_short}" != "${TF_VAR_flex_region}" ]] ||
+    die "TF_VAR_flex_region_short must abbreviate TF_VAR_flex_region, not repeat it"
   validate_network_cidrs
 
   doctor_pass "required environment values are present and parseable"
@@ -1335,6 +1353,51 @@ doctor_check_anyscale_region() {
   doctor_pass "Anyscale.Platform supports Region A ${TF_VAR_azure_location}"
 }
 
+doctor_reset_vm_quota_requirements() {
+  DOCTOR_VM_QUOTA_KEYS=()
+  DOCTOR_VM_QUOTA_REQUIRED=()
+  DOCTOR_VM_QUOTA_AVAILABLE=()
+  DOCTOR_VM_QUOTA_LABELS=()
+}
+
+doctor_record_vm_quota_requirement() {
+  local label="$1"
+  local key="${DOCTOR_VM_QUOTA_REGION}"$'\t'"${DOCTOR_VM_QUOTA_FAMILY}"
+  local index
+
+  for ((index = 0; index < ${#DOCTOR_VM_QUOTA_KEYS[@]}; index++)); do
+    if [[ "${DOCTOR_VM_QUOTA_KEYS[index]}" == "${key}" ]]; then
+      DOCTOR_VM_QUOTA_REQUIRED[index]=$((DOCTOR_VM_QUOTA_REQUIRED[index] + DOCTOR_VM_REQUIRED_VCPUS))
+      DOCTOR_VM_QUOTA_AVAILABLE[index]="${DOCTOR_VM_AVAILABLE_VCPUS}"
+      DOCTOR_VM_QUOTA_LABELS[index]="${DOCTOR_VM_QUOTA_LABELS[index]}, ${label}"
+      return
+    fi
+  done
+
+  index="${#DOCTOR_VM_QUOTA_KEYS[@]}"
+  DOCTOR_VM_QUOTA_KEYS[index]="${key}"
+  DOCTOR_VM_QUOTA_REQUIRED[index]="${DOCTOR_VM_REQUIRED_VCPUS}"
+  DOCTOR_VM_QUOTA_AVAILABLE[index]="${DOCTOR_VM_AVAILABLE_VCPUS}"
+  DOCTOR_VM_QUOTA_LABELS[index]="${label}"
+}
+
+doctor_check_combined_vm_quota() {
+  local index key region family required_vcpus available_vcpus labels
+
+  for ((index = 0; index < ${#DOCTOR_VM_QUOTA_KEYS[@]}; index++)); do
+    key="${DOCTOR_VM_QUOTA_KEYS[index]}"
+    region="${key%%$'\t'*}"
+    family="${key#*$'\t'}"
+    required_vcpus="${DOCTOR_VM_QUOTA_REQUIRED[index]}"
+    available_vcpus="${DOCTOR_VM_QUOTA_AVAILABLE[index]}"
+    labels="${DOCTOR_VM_QUOTA_LABELS[index]}"
+
+    ((available_vcpus >= required_vcpus)) ||
+      die "combined minimum for ${labels} is ${required_vcpus} ${family} vCPUs in ${region}, but only ${available_vcpus} remain"
+    doctor_pass "combined minimum for ${labels} is ${required_vcpus} ${family} vCPUs in ${region} (${available_vcpus} remain)"
+  done
+}
+
 doctor_check_vm_sku() {
   local region="$1" vm_size="$2" label="$3" required_instances="${4:-1}"
   local sku_json usage_json family vcpus restriction_reasons current limit required_vcpus available_vcpus
@@ -1368,11 +1431,125 @@ doctor_check_vm_sku() {
   ((available_vcpus >= required_vcpus)) ||
     die "${label} needs ${required_vcpus} ${family} vCPUs in ${region}, but only ${available_vcpus} remain"
 
+  DOCTOR_VM_QUOTA_REGION="${region}"
+  DOCTOR_VM_QUOTA_FAMILY="${family}"
+  DOCTOR_VM_REQUIRED_VCPUS="${required_vcpus}"
+  DOCTOR_VM_AVAILABLE_VCPUS="${available_vcpus}"
+  doctor_record_vm_quota_requirement "${label}"
   doctor_pass "${label} ${vm_size} is available in ${region} (${available_vcpus} ${family} vCPUs remain)"
+}
+
+sku_options() {
+  local region_a="${1:-}" region_b="${2:-}" mode="${3:-}"
+  local temp_dir candidates_json candidate_count
+
+  [[ -n "${region_a}" && -n "${region_b}" && -n "${mode}" && $# -eq 3 ]] ||
+    die "usage: ./scripts/anyscale-aks.sh sku-options REGION_A REGION_B cpu|gpu"
+  [[ "${mode}" == "cpu" || "${mode}" == "gpu" ]] ||
+    die "mode must be cpu or gpu"
+
+  need_cmd az
+  need_cmd jq
+  az account show --query id -o tsv --only-show-errors >/dev/null ||
+    die "Azure CLI is not authenticated; run az login"
+
+  temp_dir="$(mktemp -d "${TMPDIR:-/tmp}/anyscale-sku-options.XXXXXX")"
+  az account list-locations -o json --only-show-errors >"${temp_dir}/locations.json"
+  for region in "${region_a}" "${region_b}"; do
+    jq -e --arg region "${region}" 'any(.[]; .name == $region)' "${temp_dir}/locations.json" >/dev/null ||
+      die "unknown Azure region: ${region}; use a canonical name from az account list-locations"
+  done
+
+  az provider show --namespace Anyscale.Platform -o json --only-show-errors >"${temp_dir}/provider.json"
+  jq -e \
+    --arg region "${region_a}" \
+    --slurpfile locations "${temp_dir}/locations.json" '
+      ($locations[0][] | select(.name == $region) | .displayName) as $display_name
+      | [.resourceTypes[] | select(.resourceType == "clouds") | .locations[] | ascii_downcase]
+      | index($display_name | ascii_downcase) != null
+    ' "${temp_dir}/provider.json" >/dev/null ||
+    die "Anyscale.Platform does not list Region A ${region_a} as supported"
+
+  az vm list-skus --location "${region_a}" --resource-type virtualMachines -o json --only-show-errors >"${temp_dir}/region-a-skus.json"
+  az vm list-skus --location "${region_b}" --resource-type virtualMachines -o json --only-show-errors >"${temp_dir}/region-b-skus.json"
+  az vm list-usage --location "${region_a}" -o json --only-show-errors >"${temp_dir}/region-a-usage.json"
+  az vm list-usage --location "${region_b}" -o json --only-show-errors >"${temp_dir}/region-b-usage.json"
+
+  candidates_json="$({ jq -n \
+    --arg mode "${mode}" \
+    --slurpfile a_skus "${temp_dir}/region-a-skus.json" \
+    --slurpfile b_skus "${temp_dir}/region-b-skus.json" \
+    --slurpfile a_usage "${temp_dir}/region-a-usage.json" \
+    --slurpfile b_usage "${temp_dir}/region-b-usage.json" '
+      def quota_map($usage):
+        reduce $usage[] as $item ({};
+          .[$item.name.value] = (($item.limit | tonumber) - ($item.currentValue | tonumber))
+        );
+      def normalize($skus):
+        [
+          $skus[]
+          | select(([.restrictions[]? | select(.reasonCode != null)] | length) == 0)
+          | . as $sku
+          | (reduce .capabilities[]? as $cap ({}; .[$cap.name] = $cap.value)) as $caps
+          | {
+              name: $sku.name,
+              family: $sku.family,
+              vcpus: (($caps.vCPUs // "0") | tonumber),
+              gpus: (($caps.GPUs // "0") | tonumber),
+              memory_gib: (($caps.MemoryGB // "0") | tonumber),
+              premium_io: (($caps.PremiumIO // "False") == "True")
+            }
+          | select(.vcpus > 0)
+        ];
+      (quota_map($a_usage[0])) as $a_quota
+      | (quota_map($b_usage[0])) as $b_quota
+      | (normalize($a_skus[0])) as $a
+      | (normalize($b_skus[0])) as $b
+      | [
+          $a[] as $left
+          | $b[]
+          | select(.name == $left.name)
+            | select(.vcpus >= 4 and .vcpus <= 8)
+            | select(if $mode == "gpu" then .gpus > 0 else .gpus == 0 and .premium_io and .memory_gib >= 8 end)
+          | {
+              sku: .name,
+              vcpus: .vcpus,
+              gpus: .gpus,
+              memory_gib: .memory_gib,
+              family: (if $left.family == .family then .family else ($left.family + "/" + .family) end),
+              region_a_remaining: ($a_quota[$left.family] // -1),
+              region_b_remaining: ($b_quota[.family] // -1)
+            }
+          | select(.region_a_remaining >= .vcpus and .region_b_remaining >= .vcpus)
+        ]
+      | sort_by(
+          (if $mode == "cpu" and (.sku | startswith("Standard_D")) then 0 else 1 end),
+          .vcpus,
+          .gpus,
+          .sku
+        )
+      | if $mode == "cpu" then .[:20] else . end
+    '; } 2>/dev/null)"
+  rm -rf "${temp_dir}"
+
+  candidate_count="$(jq 'length' <<<"${candidates_json}")"
+  ((candidate_count > 0)) ||
+    die "no unrestricted ${mode} VM SKU has quota for one VM in both ${region_a} and ${region_b}"
+
+  printf 'Shared %s VM SKU candidates with quota for one VM in both regions:\n' "${mode}"
+  printf 'SKU\tVCPUS\tMEMORY_GIB\tGPUS\tREGION_A_VCPUS_REMAINING\tREGION_B_VCPUS_REMAINING\tQUOTA_FAMILY\n'
+  jq -r '.[] | [.sku, .vcpus, .memory_gib, .gpus, .region_a_remaining, .region_b_remaining, .family] | @tsv' <<<"${candidates_json}"
+  if [[ "${mode}" == "cpu" ]]; then
+    printf '\nShowing up to 20 shared 4-8 vCPU, Premium SSD-capable CPU candidates. Choose one SKU for both TF_VAR_cpu_vm_size and TF_VAR_flex_host_vm_size.\n'
+  else
+    printf '\nShowing shared 4-8 vCPU GPU candidates. Choose one SKU for both the Region A GPU pool and TF_VAR_flex_host_vm_size. Azure does not provide the Kubernetes GPU product label in this response.\n'
+  fi
 }
 
 doctor_check_vm_capacity() {
   local gpu_key gpu_vm_size gpu_min_count
+
+  doctor_reset_vm_quota_requirements
 
   doctor_check_vm_sku \
     "${TF_VAR_azure_location}" \
@@ -1390,6 +1567,8 @@ doctor_check_vm_capacity() {
       "AKS GPU pool ${gpu_key}" \
       "$((gpu_min_count > 0 ? gpu_min_count : 1))"
   done < <(jq -r 'to_entries[] | [.key, .value.vm_size, (.value.min_count // 0)] | @tsv' <<<"${TF_VAR_gpu_pool_configs}")
+
+  doctor_check_combined_vm_quota
 }
 
 doctor_check_anyscale_cli() {
@@ -1472,6 +1651,9 @@ main() {
   doctor)
     doctor
     ;;
+  sku-options)
+    sku_options "${@:2}"
+    ;;
   status)
     status
     ;;
@@ -1528,6 +1710,10 @@ main() {
     sync_azure_context
     render_tfvars
     terraform_cmd init
+    if destroy_verified_complete; then
+      terraform_cmd destroy -auto-approve
+      return 0
+    fi
     import_untracked_anyscale_resources
     reuse_existing_anyscale_default_admin_assignment
     drain_anyscale_jobs
@@ -1558,4 +1744,6 @@ main() {
   esac
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

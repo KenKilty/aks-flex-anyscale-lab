@@ -6,7 +6,7 @@ sequenceDiagram
   participant operator as Anyscale operator
   participant api as Kubernetes API
   participant head as Ray head on AKS
-  participant managed as GPU worker on managed AKS
+  participant managed as Ray worker on managed AKS
   participant flex as Ray worker on Flex
   participant storage as Azure Blob Storage
 
@@ -20,9 +20,15 @@ sequenceDiagram
   operator->>api: Create Ray cluster and job resources
   api-->>head: Schedule the head pod in Region A
   alt CPU mode
+    api-->>managed: Schedule one CPU worker in Region A
     api-->>flex: Schedule one CPU worker on aksflexnodes
-    head->>flex: Start one-worker CPU training
-    flex-->>head: Return loss and runtime metrics
+    Note over managed,flex: The same Unbounded network spans AKS and Flex pod traffic
+    head->>managed: Start rank 0 or rank 1
+    head->>flex: Start the other training rank
+    loop Four smoke training steps
+      managed-->>head: Return rank loss and runtime metrics
+      flex-->>head: Return rank loss and runtime metrics
+    end
   else GPU mode
     api-->>managed: Schedule one GPU worker in Region A
     api-->>flex: Schedule one GPU worker on aksflexnodes
@@ -38,4 +44,4 @@ sequenceDiagram
   command->>control: Poll job state and read driver logs
   control-->>command: Return SUCCEEDED and WORKLOAD_SUMMARY_JSON
   command->>api: Collect Kubernetes pod placement
-  command-->>learner: Save joined dual GPU training proof
+  command-->>learner: Save training results and placement evidence

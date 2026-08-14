@@ -8,7 +8,7 @@ resource "terraform_data" "unbounded_net" {
     terraform_data.managed_cni_ready.id,
     local.unbounded_version,
     local.unbounded_manifests_sha256,
-    var.cilium_pod_cidr,
+    var.aks_pod_cidr,
     var.unbounded_flex_pod_cidr,
     var.flex_subnet_cidr,
     var.subnet_cidrs.aks_nodes,
@@ -20,7 +20,7 @@ resource "terraform_data" "unbounded_net" {
     environment = {
       AKS_CLUSTER_NAME           = module.aks.cluster_name
       AKS_NODE_CIDR              = var.subnet_cidrs.aks_nodes
-      AKS_POD_CIDR               = var.cilium_pod_cidr
+      AKS_POD_CIDR               = var.aks_pod_cidr
       AKS_RESOURCE_GROUP         = azurerm_resource_group.this.name
       FLEX_NODE_CIDR             = var.flex_subnet_cidr
       FLEX_POD_CIDR              = var.unbounded_flex_pod_cidr

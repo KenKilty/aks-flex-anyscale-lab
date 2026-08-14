@@ -130,14 +130,16 @@ settings you own rather than changing every default.
 
 | Set or review | What you set | Why it matters |
 | --- | --- | --- |
-| Azure IDs | `ARM_SUBSCRIPTION_ID`, `ARM_TENANT_ID`, `TF_VAR_azure_subscription_id`, and `TF_VAR_azure_tenant_id` | Azure CLI and Terraform need to use the same subscription and tenant. |
+| Azure IDs | `TF_VAR_azure_subscription_id` and `TF_VAR_azure_tenant_id` | Bootstrap copies the active Azure CLI subscription and tenant into the profile. |
 | Ownership tag | `Owner` inside `TF_VAR_tags` | Tags make it clear who can answer questions about cost or cleanup. |
 | SSH key path | `SSH_PRIVATE_KEY_PATH` | Module 3 uses the private key and its matching `.pub` file to reach the Flex VM. |
-| Region pair | `TF_VAR_azure_location`, `TF_VAR_flex_region`, and both `*_region_short` values | AKS runs in the home region and the Flex VM runs in the second region. Both need quota and extension support. |
+| Region pair | Both location and `*_region_short` values | AKS runs in the home region and the Flex VM runs in the second region. Use concise labels such as `wus2` for `westus2`; the labels become part of resource names. |
 | Network ranges | VNet, Flex VNet, pod, and service CIDRs | These ranges must not overlap with networks you need to reach through your laptop, VPN, or Azure environment. |
 
-`ARM_USE_CLI="true"` uses your existing Azure CLI sign-in. Do not put Azure passwords,
-client secrets, private-key contents, Anyscale tokens, or kubeconfigs in `.env`.
+The setup helper exports Terraform's `ARM_SUBSCRIPTION_ID` and `ARM_TENANT_ID`
+from the corresponding `TF_VAR_azure_*` values at runtime. Do not put Azure
+passwords, client secrets, private-key contents, Anyscale tokens, or kubeconfigs
+in `.env`.
 
 The setup helper renders `TF_VAR_*` values into
 `infra/terraform/terraform.auto.tfvars.json`. Both `.env` and rendered Terraform
@@ -145,10 +147,14 @@ state and plan files are ignored and must not be committed.
 
 ### Configure by lab stage
 
-The starting values run the CPU path. Choose CPU or GPU settings from the quota
-and capacity available in the target Azure environment. The Flex VM is enabled
-because every path uses it. Anyscale remains disabled until Module 4 confirms
-that the AKS cluster can install the operator extension.
+The starting values run the CPU path. Before changing regions or worker SKUs,
+run `./scripts/anyscale-aks.sh sku-options REGION_A REGION_B cpu|gpu`. The
+command lists unrestricted SKUs with quota for one VM in each region. Save one
+shared worker SKU as both `TF_VAR_cpu_vm_size` and
+`TF_VAR_flex_host_vm_size` for CPU mode, or as the managed GPU pool SKU and
+`TF_VAR_flex_host_vm_size` for GPU mode. The Flex VM is enabled because every
+path uses it. Anyscale remains disabled until Module 4 confirms that the AKS
+cluster can install the operator extension.
 
 | When | Setting | Recommended action |
 | --- | --- | --- |
@@ -189,11 +195,11 @@ Format `.env-lab2` the same way as `.env-template` and keep it out of Git.
 Important GPU settings:
 
 ```bash
-TF_VAR_gpu_pool_configs='{"gpu":{"name":"gpupool","vm_size":"<managed-gpu-vm-size>","product_name":"<managed-gpu-product-label>","gpu_count":"1","min_count":1,"max_count":1,"availability_zones":[]}}'
-TF_VAR_flex_host_vm_size="<gpu-vm-size>"
+TF_VAR_gpu_pool_configs='{"gpu":{"name":"gpupool","vm_size":"<shared-gpu-vm-sku>","product_name":"<gpu-product-label>","gpu_count":"1","min_count":1,"max_count":1,"availability_zones":[]}}'
+TF_VAR_flex_host_vm_size="<shared-gpu-vm-sku>"
 TF_VAR_flex_host_source_image_reference='<gpu-ready-source-image-reference-json>'
 ANYSCALE_FLEX_GPU_ENABLED="true"
-ANYSCALE_RESULTS_GPU_PRODUCT_LABEL="<flex-gpu-product-label>"
+ANYSCALE_RESULTS_GPU_PRODUCT_LABEL="<gpu-product-label>"
 ```
 
 Keep each node domain at one GPU. The GPU workload starts two Ray Train workers

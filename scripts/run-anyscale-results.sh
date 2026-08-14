@@ -30,6 +30,7 @@ GPU_IMAGE_URI=""
 REMOTE_REQUIREMENTS_FILE=""
 JOB_MAX_RETRIES="0"
 SUBMIT_TIMEOUT_SECONDS="300"
+JOB_WAIT_TIMEOUT_SECONDS="${ANYSCALE_RESULTS_JOB_TIMEOUT_SECONDS:-2700}"
 ANYSCALE_EXTENSION_NAME="${ANYSCALE_EXTENSION_NAME:-anyscale-operator}"
 AKS_FLEX_AGENT_POOL_NAME="${AKS_FLEX_AGENT_POOL_NAME:-aksflexnodes}"
 PLACEMENT_WATCHER_PID=""
@@ -363,6 +364,10 @@ collect_kubernetes_placement_results() {
   jq -e '.pods | length > 0' "${placement_file}" >/dev/null || die "no Kubernetes placement pods found for ${job_name}"
   if [[ "${mode}" == "cpu" ]]; then
     jq -e \
+      --arg region "${TF_VAR_azure_location}" \
+      '.pods[] | select(.ray_node_type == "worker" and .node_region == $region and .node_agentpool == "cpu")' \
+      "${placement_file}" >/dev/null || die "no CPU worker pod placed on managed AKS CPU pool in region ${TF_VAR_azure_location}"
+    jq -e \
       --arg region "${TF_VAR_flex_region}" \
       --arg pool "${AKS_FLEX_AGENT_POOL_NAME}" \
       '.pods[] | select(.ray_node_type == "worker" and .node_region == $region and .node_agentpool == $pool)' \
@@ -380,6 +385,37 @@ collect_kubernetes_placement_results() {
   fi
 
   printf '%s\n' "${placement_file}"
+}
+
+fetch_job_logs_once() {
+  local job_name="$1"
+  local logs_file="$2"
+
+  .venv/bin/anyscale job logs \
+    --name "${job_name}" \
+    --cloud "${CLOUD_REF}" \
+    --tail --max-lines 400 >"${logs_file}" || true
+}
+
+wait_for_workload_summary_log() {
+  local job_name="$1"
+  local logs_file="$2"
+  local attempts delay_seconds attempt
+
+  attempts="${ANYSCALE_RESULTS_LOG_ATTEMPTS:-6}"
+  delay_seconds="${ANYSCALE_RESULTS_LOG_DELAY_SECONDS:-5}"
+  for ((attempt = 1; attempt <= attempts; attempt++)); do
+    fetch_job_logs_once "${job_name}" "${logs_file}"
+    if grep -Fq 'WORKLOAD_SUMMARY_JSON=' "${logs_file}"; then
+      return 0
+    fi
+    if ((attempt < attempts)); then
+      printf 'info: workload summary log not available for %s; retrying (%s/%s)\n' \
+        "${job_name}" "${attempt}" "${attempts}" >&2
+      sleep "${delay_seconds}"
+    fi
+  done
+  return 1
 }
 
 resolve_node_resources() {
@@ -494,6 +530,41 @@ worker_nodes:
 EOF
 }
 
+write_dual_cpu_compute_config() {
+  local config_name="$1"
+  local head_cpu head_memory managed_cpu managed_memory flex_cpu flex_memory
+
+  read -r head_cpu head_memory < <(resolve_node_resources "agentpool=cpu" 2 8 1 4 "Ray head")
+  read -r managed_cpu managed_memory < <(resolve_node_resources "agentpool=cpu" 2 8 1 4 "managed CPU worker")
+  read -r flex_cpu flex_memory < <(resolve_node_resources "agentpool=${AKS_FLEX_AGENT_POOL_NAME}" 2 8 1 4 "Flex CPU worker")
+
+  cat >"${COMPUTE_CONFIG_DIR}/${config_name}.yaml" <<EOF
+cloud: ${CLOUD_REF}
+head_node:
+  required_resources: {CPU: ${head_cpu}, memory: ${head_memory}Gi}
+  advanced_instance_config:
+    spec:
+      nodeSelector: {agentpool: cpu}
+worker_nodes:
+  - name: managed-cpu-worker
+    required_resources: {CPU: ${managed_cpu}, memory: ${managed_memory}Gi}
+    min_nodes: 1
+    max_nodes: 1
+    advanced_instance_config:
+      spec:
+        nodeSelector: {agentpool: cpu}
+  - name: flex-cpu-worker
+    required_resources: {CPU: ${flex_cpu}, memory: ${flex_memory}Gi}
+    min_nodes: 1
+    max_nodes: 1
+    advanced_instance_config:
+      spec:
+        nodeSelector: {agentpool: ${AKS_FLEX_AGENT_POOL_NAME}}
+        tolerations:
+          - {key: aks-flex-node, operator: Equal, value: "true", effect: NoSchedule}
+EOF
+}
+
 write_compute_config() {
   local config_name="$1"
   local worker_name="$2"
@@ -502,6 +573,11 @@ write_compute_config() {
 
   if [[ "${worker_name}" == "gpu-worker" ]]; then
     write_dual_gpu_compute_config "${config_name}"
+    return
+  fi
+
+  if [[ "${worker_name}" == "cpu-worker" ]]; then
+    write_dual_cpu_compute_config "${config_name}"
     return
   fi
 
@@ -610,6 +686,28 @@ write_dual_gpu_training_proof() {
   printf '%s\n' "${proof_file}"
 }
 
+validate_dual_cpu_training_placement() {
+  local summary_file="$1"
+  local placement_file="$2"
+
+  jq -en \
+    --arg home "${TF_VAR_azure_location}" \
+    --arg flex "${TF_VAR_flex_region}" \
+    --arg flex_pool "${AKS_FLEX_AGENT_POOL_NAME}" \
+    --slurpfile summary "${summary_file}" \
+    --slurpfile placement "${placement_file}" '
+      ($summary[0].worker_training_records // []) as $training
+      | ($placement[0].pods | map(select(.ray_node_type == "worker"))) as $workers
+      | ($training | map(.hostname) | sort) as $training_hosts
+      | ($workers | map(.name) | sort) as $worker_hosts
+      | ($training | length) == 2
+      and ($training_hosts | unique | length) == 2
+      and $training_hosts == $worker_hosts
+      and ([$workers[] | select(.node_region == $home and .node_agentpool == "cpu")] | length) == 1
+      and ([$workers[] | select(.node_region == $flex and .node_agentpool == $flex_pool)] | length) == 1
+    ' >/dev/null || die "CPU training evidence did not join two ranks to managed and Flex worker pods"
+}
+
 extract_and_validate_workload_summary() {
   local job_name="$1"
   local mode="$2"
@@ -652,14 +750,15 @@ PY
     expected_worker_region="${TF_VAR_flex_region}"
   fi
 
+  placement_file="$(collect_kubernetes_placement_results "${job_name}" "${mode}")"
   if [[ "${mode}" == "gpu" ]]; then
     python3 "${VALIDATOR_SCRIPT}" "${remote_summary}" \
       --expected-worker-count 2 --require-cuda >/dev/null
   else
     python3 "${VALIDATOR_SCRIPT}" "${remote_summary}" \
-      --expected-worker-region "${expected_worker_region}" >/dev/null
+      --expected-worker-count 2 --expected-worker-region "${expected_worker_region}" >/dev/null
+    validate_dual_cpu_training_placement "${remote_summary}" "${placement_file}"
   fi
-  placement_file="$(collect_kubernetes_placement_results "${job_name}" "${mode}")"
   proof_file=""
   if [[ "${mode}" == "gpu" ]]; then
     proof_file="$(write_dual_gpu_training_proof "${job_name}" "${remote_summary}" "${placement_file}")"
@@ -795,7 +894,7 @@ submit_job_for_mode() {
   .venv/bin/anyscale job wait \
     --name "${job_name}" \
     --cloud "${CLOUD_REF}" \
-    --timeout-s 1800
+    --timeout-s "${JOB_WAIT_TIMEOUT_SECONDS}"
   wait_rc=$?
   set -e
 
@@ -806,14 +905,13 @@ submit_job_for_mode() {
     --cloud "${CLOUD_REF}" \
     --json >"${status_file}"
 
-  .venv/bin/anyscale job logs \
-    --name "${job_name}" \
-    --cloud "${CLOUD_REF}" \
-    --tail --max-lines 400 >"${logs_file}" || true
-
   if [[ ${wait_rc} -ne 0 ]]; then
+    fetch_job_logs_once "${job_name}" "${logs_file}"
     die "job ${job_name} did not reach SUCCEEDED (status: ${status_file}, logs: ${logs_file})"
   fi
+
+  wait_for_workload_summary_log "${job_name}" "${logs_file}" ||
+    die "no WORKLOAD_SUMMARY_JSON= record found after log retries for ${job_name} (logs: ${logs_file})"
 
   extract_and_validate_workload_summary "${job_name}" "${mode}" "${logs_file}"
 
@@ -835,9 +933,11 @@ submit_job_for_mode() {
 }
 
 run_cpu_mode() {
+  local cpu_worker_count
   check_flex_workload_path
-  ensure_compute_config "${CPU_CONFIG_NAME}" "cpu-worker" "1"
-  submit_job_for_mode "cpu" "${CPU_CONFIG_NAME}" "1" "--cpu-only" "${CPU_IMAGE_URI}"
+  cpu_worker_count="2"
+  ensure_compute_config "${CPU_CONFIG_NAME}" "cpu-worker" "${cpu_worker_count}"
+  submit_job_for_mode "cpu" "${CPU_CONFIG_NAME}" "${cpu_worker_count}" "--cpu-only" "${CPU_IMAGE_URI}"
 }
 
 run_gpu_mode() {

@@ -6,6 +6,7 @@ Before you begin, you need:
 
 - An [Azure subscription](https://azure.microsoft.com/free) with Owner permission to create AKS, networking, storage, managed identity, and role assignment resources
 - [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli) authenticated with `az login` when you work locally
+- [Visual Studio Code](https://code.visualstudio.com/download)
 - [Git](https://git-scm.com/downloads) and [curl](https://curl.se/download.html)
 - [Terraform](https://developer.hashicorp.com/terraform/install) 1.9 or later
 - [kubectl](https://kubernetes.io/docs/tasks/tools/) and [kubelogin](https://azure.github.io/kubelogin/)
@@ -15,5 +16,6 @@ Before you begin, you need:
 - OpenSSH client tools (`ssh`, `ssh-keygen`, and `scp`) and OpenSSL
 - A POSIX-compliant shell (bash, zsh, or [Azure Cloud Shell](https://shell.azure.com/))
 
-The bootstrap command installs the Anyscale CLI in the repository's `.venv`.
-The regional check below installs the Azure CLI `k8s-extension` extension.
+You do not need to install the Anyscale CLI before starting. The setup steps add
+it to the repository's local `.venv`. A later validation command reports any
+other missing command and tells you what to correct before deployment.

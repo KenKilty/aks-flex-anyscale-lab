@@ -28,6 +28,10 @@ variable "azure_location" {
 
 variable "region_short" {
   type = string
+  validation {
+    condition     = can(regex("^[a-z0-9]{2,8}$", var.region_short)) && var.region_short != var.azure_location
+    error_message = "region_short must be a 2-8 character lowercase alphanumeric abbreviation of azure_location."
+  }
 }
 
 variable "flex_region" {
@@ -36,6 +40,10 @@ variable "flex_region" {
 
 variable "flex_region_short" {
   type = string
+  validation {
+    condition     = can(regex("^[a-z0-9]{2,8}$", var.flex_region_short)) && var.flex_region_short != var.flex_region
+    error_message = "flex_region_short must be a 2-8 character lowercase alphanumeric abbreviation of flex_region."
+  }
 }
 
 variable "tags" {
@@ -81,8 +89,9 @@ variable "flex_subnet_cidr" {
   type = string
 }
 
-variable "cilium_pod_cidr" {
-  type = string
+variable "aks_pod_cidr" {
+  description = "Pod CIDR allocated by Unbounded to AKS-managed nodes. Must not overlap Flex pod, service, node, or connected network CIDRs."
+  type        = string
 }
 
 variable "unbounded_flex_pod_cidr" {

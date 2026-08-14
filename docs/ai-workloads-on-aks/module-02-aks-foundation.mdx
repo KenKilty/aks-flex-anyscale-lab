@@ -1,8 +1,8 @@
 ---
-title: "Module 2: Build the AKS Foundation"
-description: Use Terraform to deploy the public AKS cluster, storage, ACR, observability, and network peering that every later module depends on.
+title: "Module 2: Deploy AKS and Azure Resource"
+description: Use Terraform to deploy the public AKS cluster, storage, ACR, observability, and network peering for the lab.
 sidebar_position: 4
-sidebar_label: "Module 2: AKS Foundation"
+sidebar_label: "Module 2: Deploy AKS and Azure Resource"
 tags:
   - aks
   - terraform
@@ -12,67 +12,135 @@ tags:
 
 import Cleanup from "../../src/components/SharedMarkdown/_cleanup.mdx";
 
-In this module, you create the foundation for the entire lab: a public AKS
-cluster in **Region A**, Azure Blob Storage, Azure Container Registry, Log
-Analytics, and a Flex VM in a peered VNet in **Region B**. One Terraform apply
-creates both compute locations and the Azure services they need before the Flex
-VM joins AKS.
+In this module, one Terraform apply creates all the infrastructure the lab
+needs. **Region A** contains the AKS cluster and its supporting Azure services.
+**Region B** contains a Linux virtual machine (VM). Later in Module 3, you join
+that VM to AKS as the Flex node.
 
 ## What You Will Do
 
-You will deploy the AKS cluster, the Flex VM, the storage and registry, the
-observability resources, and the cross-region networking that the later modules
-rely on. After the apply, you will get a kubeconfig, check that the cluster is
-healthy, and confirm both VNets are peered before you connect the Flex node.
+Terraform creates these resources for you:
+
+- An **AKS cluster in Region A** to coordinate and run the workload.
+- A **Linux VM in Region B**. Later in Module 3, it becomes the Flex node.
+- An **Azure Container Registry (ACR)** that Anyscale registers as the cloud's
+  image registry and AKS is authorized to pull images from.
+- An **Azure Storage account** that Anyscale uses for cloud storage. Later in
+  Module 6, the training job also writes its result summary there.
+- **Log Analytics and Container Insights** to collect AKS container logs,
+  metrics, and Azure resource diagnostics.
+- Two **peered virtual networks (VNets)** that give the AKS nodes and Flex VM a
+  private cross-region path to each other's Azure network addresses.
+
+After Terraform finishes, you connect `kubectl` to AKS and verify the cluster,
+pod network, and VNet peering. These checks prove that the foundation is ready
+before you turn the VM into a Flex node.
 
 ## Architecture overview
 
-```text
-Region A (AKS home region)             Region B (Flex host region)
-─────────────────────────────────      ───────────────────────────
-  AKS cluster: aks-...-<region-a-short>  VNet: vnet-...-<region-b-short>
-  VNet: vnet-...-<region-a-short>        Flex VM: vm-flex-...-<region-b-short>
-  Storage, ACR, Log Analytics            (the VM joins AKS in Module 3)
-  ↕ VNet peering ↔──────────────────────↕
+<!-- Keep this diagram in sync with assets/architecture/02-aks-foundation.mmd. -->
+
+```mermaid
+flowchart LR
+  subgraph regionA["Region A - AKS home region"]
+    direction TB
+    aks["AKS cluster<br/>Managed node pools"]
+    services["Shared Azure services<br/>Blob Storage, ACR, Log Analytics"]
+    vnetA["AKS virtual network"]
+
+    aks --- vnetA
+    services --- vnetA
+  end
+
+  subgraph regionB["Region B - Flex host region"]
+    direction TB
+    flexVm["Linux VM<br/>Later in Module 3: Flex node"]
+    vnetB["Flex virtual network"]
+
+    flexVm --- vnetB
+  end
+
+  vnetA <-->|Two-way VNet peering| vnetB
+
+  classDef home fill:#e0f2fe,stroke:#0369a1,color:#082f49,font-size:18px
+  classDef shared fill:#fef3c7,stroke:#b45309,color:#451a03,font-size:18px
+  classDef flex fill:#dcfce7,stroke:#15803d,color:#052e16,font-size:18px
+  class aks,vnetA home
+  class services shared
+  class flexVm,vnetB flex
+  style regionA fill:#f0f9ff,stroke:#0284c7,stroke-width:2px,color:#082f49
+  style regionB fill:#f0fdf4,stroke:#16a34a,stroke-width:2px,color:#052e16
 ```
 
-Terraform creates both sides of the VNet peering before it creates the Flex VM,
-so the host has a cross-region network path when you join it to AKS. It also
-checks the live AKS network profile and waits for the cluster to report `Ready`
-before it starts the Flex VM. The cluster uses `networkPlugin=none`, which means
-AKS does not install a Container Network Interface
+Terraform creates both directions of the VNet peering before it creates the
+Flex VM. It also confirms that AKS responds and that its pod network is ready.
+Only then does Terraform create and start the VM in Region B.
+
+AKS uses `networkPlugin=none`, which means AKS does not install a Container
+Network Interface
 ([CNI](https://kubernetes.io/docs/concepts/extend-kubernetes/compute-storage-net/network-plugins/))
 plugin. Terraform installs [Unbounded](https://github.com/Azure/unbounded) as
-the CNI and multi-site network for the managed AKS nodes. Terraform also gives
-the Flex VM's managed identity permission to register its machine with AKS.
-Module 3 extends the pod network to the Flex node, using
-`TF_VAR_cilium_pod_cidr` for managed AKS pods and
-`TF_VAR_unbounded_flex_pod_cidr` for Flex pods.
+the CNI for the managed AKS nodes and assigns their pod addresses from
+`TF_VAR_aks_pod_cidr`.
+
+Terraform gives the VM's managed identity permission to register the machine
+with AKS.
+
+Later in Module 3, you join the VM to AKS and extend Unbounded to it. Unbounded
+assigns Flex pod addresses from `TF_VAR_unbounded_flex_pod_cidr`.
+
+The peered VNets carry node and pod traffic between the regions over private
+Azure addresses. The VM separately reaches the public AKS API over HTTPS when
+it joins the cluster.
+
+:::info Why this lab uses VNet peering
+VNet peering fits this lab because AKS and the Flex VM both run in Azure. Think
+of peering as a private road between their two Azure networks.
+
+If the Flex node ran on-premises or in another cloud, Azure VNet peering could
+not reach that network. You would provide the private road with
+[Azure ExpressRoute](https://learn.microsoft.com/azure/expressroute/expressroute-introduction)
+or a
+[site-to-site VPN](https://learn.microsoft.com/azure/vpn-gateway/vpn-gateway-about-vpngateways)
+instead. Unbounded would carry Kubernetes pod traffic across that connection
+and could use an encrypted WireGuard tunnel when needed. The connection method
+changes, but AKS and the Flex node still need a reliable network path between
+them.
+:::
 
 ## Step 1: Review your deployment settings
 
-The home region, Flex region, sizing, and Anyscale setting are already in `.env`.
-Keep Anyscale disabled while Terraform builds the AKS foundation. Confirm:
+The project, environment label, regions, sizing, and Anyscale setting are already
+in `.env`. For a repeat run, confirm that the environment label does not belong
+to an existing lab resource group. Keep Anyscale disabled while Terraform builds
+the AKS foundation:
 
 ```bash
-grep -E 'azure_location|region_short|flex_region|anyscale_enabled' .env
+grep -E '^TF_VAR_(project|environment|azure_location|region_short|flex_region|flex_region_short|anyscale_enabled)=' .env
 ```
 
-Expected plan shape:
+For the West US 2 and South Central US example from Module 1, the active
+assignments are:
 
 ```text
-TF_VAR_azure_location="<region-a-azure-name>"
-TF_VAR_region_short="<region-a-short>"
-TF_VAR_flex_region="<region-b-azure-name>"
-TF_VAR_flex_region_short="<region-b-short>"
+TF_VAR_project="flexany"
+TF_VAR_environment="dev"
+TF_VAR_azure_location="westus2"
+TF_VAR_region_short="wus2"
+TF_VAR_flex_region="southcentralus"
+TF_VAR_flex_region_short="scus"
 TF_VAR_anyscale_enabled="false"
 ```
 
+Your environment and region values can differ, but `TF_VAR_anyscale_enabled`
+must remain `"false"` for this module.
+
 :::info Using a fallback region
 If AKS capacity in Region A is unavailable, choose another Anyscale-supported AKS
-location, set `TF_VAR_azure_location` and `TF_VAR_region_short` in a separate env file, and run with
+location and rerun Module 1's `sku-options` command with Region A and Region B.
+Save the new region pair and one shared worker SKU in a separate environment
+file, then run with
 `ANYSCALE_AKS_ENV_FILE=.env.my-fallback ./scripts/anyscale-aks.sh apply`.
-Region B stays a separate reachable location and must be rechecked for CPU quota.
 :::
 
 ## Step 2: Preview the Azure resources
@@ -108,8 +176,8 @@ Terraform prints resource progress while Azure creates the cluster. Wait for the
 apply to finish, then use the node, network profile, and VNet peering checks
 below as the evidence that the foundation is ready.
 
-When complete, Terraform prints the AKS and network details you will use in the
-next module:
+When complete, Terraform prints the AKS and network details. Later in Module 3,
+you use these values to connect the Flex node:
 
 ```text
 Outputs:
@@ -121,7 +189,8 @@ Outputs:
 
 :::caution Before you connect the Flex node
 Continue only after AKS is running and both VNet peerings report `Connected` and
-`Succeeded`. The Flex host needs that network path before it can join the cluster.
+`Succeeded`. Later in Module 3, the Flex host uses that network path when it
+joins the cluster.
 :::
 
 ## Step 4: Connect kubectl to the cluster
@@ -213,9 +282,9 @@ Expected network profile:
 The `plugin` value must be `none`. AKS can still report a cluster-level
 `podCidr`; Unbounded does not use that value to select each node's range. The
 node list must show `True` in `STATUS` and one `/24` from
-`TF_VAR_cilium_pod_cidr` in `POD-CIDR` for every managed node. Keep the network
+`TF_VAR_aks_pod_cidr` in `POD-CIDR` for every managed node. Keep the network
 profile and node output; together they confirm that Unbounded owns managed-node
-pod networking before Module 3 adds the Flex node.
+pod networking. Later in Module 3, you add the Flex node to this network.
 
 ## Step 7: Verify the cross-region network connection
 
@@ -247,8 +316,8 @@ flex-to-aks  <resource-group>       Connected       Succeeded
 
 Terraform creates both directions. Both `aks-to-flex` and `flex-to-aks` must show
 `PeeringState=Connected` and `ProvisioningState=Succeeded`. Do not continue while
-either direction is disconnected, failed, or still provisioning. This confirms
-the network path before the Flex VM joins AKS.
+either direction is disconnected, failed, or still provisioning. Later in
+Module 3, the Flex VM uses this network path when it joins AKS.
 
 ## Troubleshooting
 
@@ -300,13 +369,13 @@ fi
 The recovery is complete when the plan succeeds and contains only the expected
 create actions for this lab.
 
-## Success evidence
+## Validate the AKS foundation
 
 You can move on when the `sys` node pool is `Ready`, the cluster profile shows
 `networkPlugin=none`, and both VNet peerings show `Succeeded`. Keep the network
 profile, node list, and peering output. Together, they show that Unbounded
-provides pod networking and that the cross-region network path is live before the
-Flex host joins.
+provides pod networking and that the cross-region network path is live. Later in
+Module 3, you use this foundation to join the Flex host.
 
 ## Next step
 

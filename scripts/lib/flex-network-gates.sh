@@ -225,7 +225,7 @@ lab_gate_unbounded_flex_ready() {
   flex_cni_files="${artifact_dir}/flex-active-cni-files.txt"
 
   kubectl get sites aks-managed flex -o json >"${sites_json}"
-  jq -e --arg aks_pod_cidr "${TF_VAR_cilium_pod_cidr}" --arg flex_pod_cidr "${flex_pod_cidr}" '
+  jq -e --arg aks_pod_cidr "${TF_VAR_aks_pod_cidr}" --arg flex_pod_cidr "${flex_pod_cidr}" '
     ([.items[] | select(.metadata.name == "aks-managed")][0] | .spec.manageCniPlugin == true and .spec.podCidrAssignments[0].assignmentEnabled == true and (.spec.podCidrAssignments[0].cidrBlocks | index($aks_pod_cidr) != null)) and
     ([.items[] | select(.metadata.name == "flex")][0] | .spec.manageCniPlugin == true and .spec.podCidrAssignments[0].assignmentEnabled == true and (.spec.podCidrAssignments[0].cidrBlocks | index($flex_pod_cidr) != null))
   ' "${sites_json}" >/dev/null || lab_gate_die "Unbounded Site CNI ownership or pod CIDRs do not match the no-CNI contract (sites: ${sites_json})"
@@ -239,8 +239,8 @@ lab_gate_unbounded_flex_ready() {
   [[ -n "${managed_node_cidrs}" ]] || lab_gate_die "managed AKS nodes have no Unbounded pod CIDRs"
   while IFS= read -r managed_node_cidr; do
     [[ -n "${managed_node_cidr}" ]] || lab_gate_die "a managed AKS node has no Unbounded pod CIDR"
-    python3 -c 'import ipaddress, sys; child = ipaddress.ip_network(sys.argv[2]); assert child.prefixlen == 24 and child.subnet_of(ipaddress.ip_network(sys.argv[1]))' "${TF_VAR_cilium_pod_cidr}" "${managed_node_cidr}" ||
-      lab_gate_die "managed AKS node podCIDR ${managed_node_cidr} is not a /24 inside ${TF_VAR_cilium_pod_cidr}"
+    python3 -c 'import ipaddress, sys; child = ipaddress.ip_network(sys.argv[2]); assert child.prefixlen == 24 and child.subnet_of(ipaddress.ip_network(sys.argv[1]))' "${TF_VAR_aks_pod_cidr}" "${managed_node_cidr}" ||
+      lab_gate_die "managed AKS node podCIDR ${managed_node_cidr} is not a /24 inside ${TF_VAR_aks_pod_cidr}"
   done <<<"${managed_node_cidrs}"
   flex_node_pod_cidr="$(jq -r --arg node "${LAB_GATE_FLEX_NODE_NAME}" '.items[] | select(.metadata.name == $node) | .spec.podCIDR // empty' "${nodes_json}")"
   flex_site_label="$(jq -r --arg node "${LAB_GATE_FLEX_NODE_NAME}" '.items[] | select(.metadata.name == $node) | .metadata.labels["unbounded-cloud.io/site"] // empty' "${nodes_json}")"
@@ -267,8 +267,8 @@ lab_gate_unbounded_flex_ready() {
     lab_gate_die "AKS-managed node ${aks_node_name} must not use Unbounded-managed kube-proxy"
   aks_unbounded_pod="$(jq -r --arg node "${aks_node_name}" '[.items[] | select(.spec.nodeName == $node and .metadata.labels["app.kubernetes.io/name"] == "unbounded-net-node") | .metadata.name] | first // empty' "${unbounded_pods_json}")"
   [[ -n "${aks_unbounded_pod}" ]] || lab_gate_die "unable to inspect CNI files on AKS-managed node ${aks_node_name}"
-  kubectl -n unbounded-system exec "${aks_unbounded_pod}" -c node -- ip -4 route show "${TF_VAR_cilium_pod_cidr}" | grep -q 'dev unbounded0' ||
-    lab_gate_die "Unbounded does not route managed AKS pod CIDR ${TF_VAR_cilium_pod_cidr} through unbounded0 on ${aks_node_name}"
+  kubectl -n unbounded-system exec "${aks_unbounded_pod}" -c node -- ip -4 route show "${TF_VAR_aks_pod_cidr}" | grep -q 'dev unbounded0' ||
+    lab_gate_die "Unbounded does not route managed AKS pod CIDR ${TF_VAR_aks_pod_cidr} through unbounded0 on ${aks_node_name}"
   kubectl -n unbounded-system exec "${aks_unbounded_pod}" -c node -- tc filter show dev unbounded0 egress >"${aks_tc_filters}"
   grep -q 'unbounded_encap' "${aks_tc_filters}" || lab_gate_die "Unbounded does not own the unbounded0 TC egress filter on ${aks_node_name} (filters: ${aks_tc_filters})"
   ! grep -q 'cil_to_netdev' "${aks_tc_filters}" || lab_gate_die "managed Cilium attached to unbounded0 on ${aks_node_name} (filters: ${aks_tc_filters})"

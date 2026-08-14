@@ -100,7 +100,7 @@ The foundation prints this profile:
 
 The `plugin` value must be `none`. AKS can still report a cluster-level
 `podCidr`; Unbounded assigns the active managed-node pod ranges from
-`TF_VAR_cilium_pod_cidr`. `TF_VAR_unbounded_flex_pod_cidr` is the separate Flex
+`TF_VAR_aks_pod_cidr`. `TF_VAR_unbounded_flex_pod_cidr` is the separate Flex
 pod range managed by Unbounded.
 
 ## Step 2: Check the provisioned Flex host
@@ -197,7 +197,7 @@ problems. Use the DNS, egress, or route pod logs for a traffic problem. Correct
 the problem, then rerun the same Module 3 command. Continue to Module 4 after
 every required check reports `PASS`.
 
-## Success evidence
+## Validate the Flex node
 
 The networking command saves its detailed results under
 `.cache/lab-validation/m3-flex-network/`. Keep these files if you need to compare

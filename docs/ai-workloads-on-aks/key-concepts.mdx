@@ -32,25 +32,25 @@ A running Ray cluster has two kinds of members:
 | Member | What it does | Where it runs in this lab |
 | --- | --- | --- |
 | Ray head | Coordinates the cluster. It tracks cluster state and hands work to the workers. There is exactly one. | A [pod](https://kubernetes.io/docs/concepts/workloads/pods/) on an AKS-managed CPU node |
-| Ray worker | Runs the training function. There can be many. | CPU mode uses one worker on the Flex node. GPU mode uses one worker on an AKS-managed GPU node and one on the Flex GPU node. |
+| Ray worker | Runs the training function. There can be many. | Both modes use one managed AKS worker in Region A and one Flex worker in Region B. CPU mode uses CPU nodes; GPU mode uses GPU nodes. |
 
-Both workload paths therefore use AKS-managed and Flex compute. In CPU mode, the
-Ray head runs on an AKS-managed CPU node and the single training worker runs on
-the Flex node. In GPU mode, the head remains on the managed CPU node while two
-training workers run, one on each GPU location.
+Both workload paths use the same two-region shape. The Ray head runs on an
+AKS-managed CPU node. One training worker runs on managed AKS in Region A, and
+the other runs on Flex in Region B. CPU mode uses CPU workers; GPU mode uses GPU
+workers.
 
 This lab uses [**Ray Train**](https://docs.ray.io/en/latest/train/train.html),
 Ray's library for distributed model training. Ray Train defines a worker as a
-process that runs the training function. Its `ScalingConfig` starts one worker
-for the CPU run and two workers for the GPU run in this lab.
+process that runs the training function. Its `ScalingConfig` starts two workers
+for both CPU and GPU runs in this lab.
 
 Each worker has a **world rank**, a unique number within that training run, and
-the **world size** is the total number of workers. The GPU run has world size 2,
+the **world size** is the total number of workers. Both modes have world size 2,
 with ranks 0 and 1. DeepSpeed coordinates distributed optimization between those
 two processes. A completed record from each rank proves that both worker
 processes ran the training function. Module 6 combines those records with
-Kubernetes pod placement, which proves that the processes ran on the two
-different GPU nodes.
+Kubernetes pod placement, which proves that the processes ran in the two
+regions.
 
 The workload also uses [**DeepSpeed**](https://github.com/deepspeedai/DeepSpeed)
 to train with less GPU memory. Its [ZeRO stage 2](https://www.deepspeed.ai/tutorials/zero/)
@@ -82,9 +82,9 @@ model.
 The workload summary shows that each Ray Train worker completed part of the
 DeepSpeed training run. Kubernetes placement data shows which node and Azure
 region hosted each worker pod. Module 6 joins those two records so you can see
-that the CPU worker ran on Flex, or that the two GPU workers ran concurrently on
-the AKS-managed and Flex GPU nodes. Together, those records demonstrate one Ray
-training workload using compute in two Azure regions.
+one managed AKS worker in Region A and one Flex worker in Region B. Together,
+those records demonstrate one Ray training workload using compute in two Azure
+regions.
 :::
 
 ## AKS Flex Node
@@ -172,8 +172,8 @@ configuration from the Terraform values you set in Module 1.
 
 ## How the pieces fit together
 
-The diagram shows both possible worker locations. CPU mode uses the Flex worker;
-GPU mode uses the AKS-managed and Flex workers together.
+The diagram shows the two worker locations used by both modes. CPU mode uses CPU
+workers, while GPU mode uses GPU workers.
 
 <!-- Keep this diagram in sync with assets/architecture/00-key-concepts-flow.mmd. -->
 
@@ -218,9 +218,9 @@ lab's DeepSpeed Ray Train script. Job management in the Anyscale control plane
 records the request. The operator in your Azure subscription polls the control
 plane over an outbound connection, retrieves the pending work, and creates the
 Ray resources in AKS. The Kubernetes scheduler then matches each pod's resource
-requirements and node selector to an eligible node. CPU mode places its training
-worker on Flex. GPU mode places one worker on the AKS-managed GPU node and the
-other on the Flex GPU node in the second region.
+requirements and node selector to an eligible node. Both modes place one worker
+on managed AKS in Region A and one on Flex in Region B. The selected mode
+determines whether those workers request CPU or GPU capacity.
 
 ## Terms you will see in commands
 
