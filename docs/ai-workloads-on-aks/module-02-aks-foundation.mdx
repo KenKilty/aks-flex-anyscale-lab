@@ -1,8 +1,8 @@
 ---
-title: "Module 2: Deploy AKS and Azure Resource"
+title: "Module 2: Deploy AKS and Azure Resources"
 description: Use Terraform to deploy the public AKS cluster, storage, ACR, observability, and network peering for the lab.
 sidebar_position: 4
-sidebar_label: "Module 2: Deploy AKS and Azure Resource"
+sidebar_label: "Module 2: Deploy AKS and Azure Resources"
 tags:
   - aks
   - terraform
@@ -23,13 +23,18 @@ Terraform creates these resources for you:
 
 - An **AKS cluster in Region A** to coordinate and run the workload.
 - A **Linux VM in Region B**. Later in Module 3, it becomes the Flex node.
-- An **Azure Container Registry (ACR)** that Anyscale registers as the cloud's
+- An **[Azure Container Registry (ACR)](https://learn.microsoft.com/en-us/azure/container-registry/container-registry-intro)**
+  that Anyscale registers as the cloud's
   image registry and AKS is authorized to pull images from.
-- An **Azure Storage account** that Anyscale uses for cloud storage. Later in
+- An **[Azure Storage account](https://learn.microsoft.com/en-us/azure/storage/blobs/storage-blobs-introduction)**
+  that Anyscale uses for cloud storage. Later in
   Module 6, the training job also writes its result summary there.
-- **Log Analytics and Container Insights** to collect AKS container logs,
+- **[Log Analytics](https://learn.microsoft.com/en-us/azure/azure-monitor/logs/log-analytics-workspace-overview)
+  and [Container Insights](https://learn.microsoft.com/en-us/azure/azure-monitor/containers/container-insights-overview)**
+  to collect AKS container logs,
   metrics, and Azure resource diagnostics.
-- Two **peered virtual networks (VNets)** that give the AKS nodes and Flex VM a
+- Two **[peered virtual networks (VNets)](https://learn.microsoft.com/en-us/azure/virtual-network/virtual-network-peering-overview)**
+  that give the AKS nodes and Flex VM a
   private cross-region path to each other's Azure network addresses.
 
 After Terraform finishes, you connect `kubectl` to AKS and verify the cluster,
@@ -197,7 +202,8 @@ joins the cluster.
 
 `kubectl` is the Kubernetes command-line tool, and it needs credentials before it
 can talk to your new cluster. This command fetches them and stores them in your
-kubeconfig, the local file that holds cluster connection details.
+[kubeconfig](https://kubernetes.io/docs/concepts/configuration/organize-cluster-access-kubeconfig/),
+the local file that holds cluster connection details.
 
 ```bash
 source .env

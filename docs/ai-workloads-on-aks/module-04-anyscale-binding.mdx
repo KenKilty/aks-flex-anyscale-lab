@@ -20,12 +20,14 @@ exposes Ray services.
 You will create the Anyscale on Azure cloud resource for the AKS cluster, install
 its Azure-managed operator extension, and confirm the deploying user has the
 Anyscale Platform administrator role needed for the preview control plane. Before
-you move on, you will check the operator pod and confirm that the Gateway API
+you move on, you will check the operator pod and confirm that the
+[Gateway API](https://gateway-api.sigs.k8s.io/)
 resource reports `Programmed=True`.
 
 ## Background: Anyscale on AKS
 
-Anyscale on AKS is available through Azure-native resources and an AKS cluster extension.
+Anyscale on AKS is available through Azure-native resources and an
+[AKS cluster extension](https://learn.microsoft.com/en-us/azure/aks/cluster-extensions).
 The extension installs the Anyscale operator in the `anyscale-operator`
 [namespace](https://kubernetes.io/docs/concepts/overview/working-with-objects/namespaces/).
 The operator connects outbound to the Anyscale control plane at
@@ -174,7 +176,9 @@ resource, so a stale organization default cannot redirect the workload.
 :::caution Anyscale user access is required
 The deployment assigns the signed-in Azure principal the built-in
 `Anyscale Platform Administrator Role` at subscription scope by default. This is separate
-from Kubernetes RBAC and from the workload identity data-plane roles used by jobs. Keep
+from [Kubernetes RBAC](https://kubernetes.io/docs/reference/access-authn-authz/rbac/)
+and from the [workload identity](https://learn.microsoft.com/en-us/azure/aks/workload-identity-overview)
+data-plane roles used by jobs. Keep
 `TF_VAR_anyscale_platform_default_admin_assignment` enabled unless an
 administrator pre-creates an equivalent assignment for you.
 :::

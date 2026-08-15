@@ -17,12 +17,14 @@ the platform that needs it. In this lab, you bring a second Linux host into the
 same AKS cluster and use it for a distributed AI workload. You will keep your
 job submission in one place while the Kubernetes
 [scheduler](https://kubernetes.io/docs/concepts/scheduling-eviction/kube-scheduler/)
-places the Ray head and worker pods where the cluster has capacity.
+places the [Ray](https://github.com/ray-project/ray) head and worker pods where
+the cluster has capacity.
 
 You will use **AKS Flex Node** to join a Linux host outside the AKS managed node
-pools as a worker node. **Anyscale on Azure** adds managed Ray Jobs, compute
-configs, and workload observability. Together, they let you submit one job while
-Kubernetes places its parts across AKS and Flex.
+pools as a worker node. **Anyscale on Azure** adds managed
+[Ray Jobs](https://docs.ray.io/en/latest/cluster/running-applications/job-submission/index.html),
+compute configs, and workload observability. Together, they let you submit one
+job while Kubernetes places its parts across AKS and Flex.
 
 The lab runs a Ray Train and DeepSpeed fine-tuning demonstration across two
 locations. The Ray head runs on an AKS CPU node in Region A. Both modes run one
@@ -137,7 +139,7 @@ Region A and the two GPU ranks ran on managed AKS and Flex.
 | --- | --- |
 | [Key Concepts](./key-concepts) | Learn what Ray, AKS Flex Node, Anyscale, and Unbounded each contribute, and the terms the modules use. |
 | [1: Prepare Your Environment](./module-01-environment-setup) | Sign in and check the tools and quota you'll need, then choose the CPU or GPU path available in your Azure environment. |
-| [2: Deploy AKS and Azure Resource](./module-02-aks-foundation) | Create the AKS cluster, storage, a container registry, the Flex VM, and the cross-region networking between them. |
+| [2: Deploy AKS and Azure Resources](./module-02-aks-foundation) | Create the AKS cluster, storage, a container registry, the Flex VM, and the cross-region networking between them. |
 | [3: Connect a Flex Node](./module-03-flex-node) | Join the provisioned VM to your AKS cluster as a Flex node, and verify that pods can communicate across both regions. |
 | [4: Connect Anyscale](./module-04-anyscale-binding) | Add the Anyscale cloud, deploy the Anyscale operator, and configure the Gateway so you can submit and observe Ray Jobs. |
 | [5: Review Scaling and Readiness](./module-05-autoscaling) | Inspect AKS scaling behavior, confirm Flex networking is working, and verify that the cluster is ready for the distributed workload. |

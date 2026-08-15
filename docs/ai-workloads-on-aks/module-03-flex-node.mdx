@@ -24,7 +24,7 @@ and Flex before you connect Anyscale.
 
 ## How Flex networking works
 
-AKS Flex Node prepares the external machine and joins it to AKS as a worker. It
+AKS Flex Node prepares the Flex node VM and joins it to AKS as a worker. It
 does not provide the pod network. Unbounded manages the pod networking path for
 both the managed AKS nodes and the Flex node. It allocates Flex pod addresses,
 runs [kube-proxy](https://kubernetes.io/docs/reference/command-line-tools-reference/kube-proxy/)
@@ -132,7 +132,9 @@ Generate the configuration after the VM exists:
 ```
 
 This command finds the current stable AKS Flex Node release, downloads the
-matching configuration tool, creates a bootstrap token, and saves the join
+matching configuration tool, creates a
+[bootstrap token](https://kubernetes.io/docs/reference/access-authn-authz/bootstrap-tokens/),
+and saves the join
 configuration at `.cache/flex/aks-flex-node-config.json`.
 
 Expected output includes:
@@ -156,14 +158,17 @@ archive use the same release.
 This command copies the configuration to the VM, verifies the downloaded archive,
 and starts AKS Flex Node so the machine joins your cluster. It then applies the
 labels this lab uses to target the node, adds a taint, and approves the node's
-certificate request so the cluster trusts it.
+[certificate request](https://kubernetes.io/docs/reference/access-authn-authz/certificate-signing-requests/)
+so the cluster trusts it.
 
 A [taint](https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/)
 with the `NoSchedule` effect marks the node as reserved. Ordinary pods will not
 land on it unless they have a matching toleration, which keeps unrelated
-workloads off the machine you provisioned for this lab.
+workloads off the Flex node you provisioned for this lab.
 
-On a newly created Ubuntu VM, the command waits for cloud-init and the package
+On a newly created Ubuntu VM, the command waits for
+[cloud-init](https://learn.microsoft.com/en-us/azure/virtual-machines/linux/using-cloud-init)
+and the package
 manager before it installs the Flex components. A short pause at this point is
 expected. If the command reaches its timeout, rerun the same command after the
 host finishes its first-start tasks.

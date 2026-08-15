@@ -1,5 +1,5 @@
 ---
-name: "Browser-Led Student Lab"
+name: "Browser-Led Student Lab E2E Test"
 description: "Test the rendered AKS Flex Node and Anyscale lab as a first-time student using the integrated browser, remediate observed defects, chronicle evidence, and verify teardown."
 argument-hint: "Optional: target profile, suspected regression, CPU/GPU scope, or other acceptance criteria"
 agent: "agent"

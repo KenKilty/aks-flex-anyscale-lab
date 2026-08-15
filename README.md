@@ -77,10 +77,10 @@ the training result and worker placement. These are the same broad steps used
 when training or fine-tuning a language model.
 
 The exercise performs real training operations, but it is intentionally small.
-The script creates a tiny GPT-2-style model from scratch, generates practice
-inputs, measures prediction error, and updates the model's internal weights. It
+The script creates a tiny GPT-2-style model from scratch, generates synthetic
+test data, measures prediction error, and updates the model's internal weights. It
 runs only four training steps so the result is quick and repeatable. Unlike a
-real fine-tuning project, it does not use a pretrained model or meaningful
+real-world fine-tuning project, it does not use a pretrained model or meaningful
 training data, and it does not produce a useful trained model.
 
 Choose the CPU or GPU path supported by quota and capacity in your Azure
@@ -126,7 +126,7 @@ Azure resources are gone.
 | Module | Outcome |
 | --- | --- |
 | [1: Prepare Your Environment](docs/ai-workloads-on-aks/module-01-environment-setup.mdx) | Sign in, check tools and quota, and choose the CPU or GPU path |
-| [2: Deploy AKS and Azure Resource](docs/ai-workloads-on-aks/module-02-aks-foundation.mdx) | Create AKS, the Flex VM, storage, a container registry, identity, observability, and networking |
+| [2: Deploy AKS and Azure Resources](docs/ai-workloads-on-aks/module-02-aks-foundation.mdx) | Create AKS, the Flex VM, storage, a container registry, identity, observability, and networking |
 | [3: Connect a Flex Node](docs/ai-workloads-on-aks/module-03-flex-node.mdx) | Join the provisioned Flex VM to AKS and verify Unbounded pod networking across both regions |
 | [4: Connect Anyscale](docs/ai-workloads-on-aks/module-04-anyscale-binding.mdx) | Create the Anyscale cloud, assign user access, install the AKS extension, and verify the Gateway |
 | [5: Review Scaling and Readiness](docs/ai-workloads-on-aks/module-05-autoscaling.mdx) | Confirm autoscaling, Flex networking, DNS, Gateway, and GPU availability when selected |
@@ -162,7 +162,9 @@ Finish with:
 
 The current lab is clean only when the lab resource group and the AKS-managed
 resource group are deleted and `terraform -chdir=infra/terraform state list`
-returns no resources. This lab deletes its Anyscale cloud through the Azure
+returns no resources. `validate-lab.sh teardown` prints `PASS M7-01`, `PASS
+M7-02`, and `PASS M7-03` when all three are true. This lab deletes its Anyscale
+cloud through the Azure
 `Anyscale.Platform` resource provider. If the console retains a cloud shell after
 its backing ARM resource is gone, provider-side cleanup is required because a
 second infrastructure delete cannot reconcile control-plane metadata.

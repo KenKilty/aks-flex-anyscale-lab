@@ -254,9 +254,10 @@ The command writes pod logs and Kubernetes JSON under
 it contains the short-lived diagnostic pod output before cleanup. A node or
 pod-network failure points to the saved node, network profile, and Unbounded site
 records. A DNS, HTTPS egress, or cross-node traffic failure points to the
-matching diagnostic pod log. Stop before submitting a workload, correct the
-problem, and rerun `./scripts/validate-lab.sh m5` until every required check
-reports `PASS`.
+matching diagnostic pod log. Ray needs healthy Unbounded routing, ClusterFirst
+DNS, and an available Anyscale Gateway, so do not submit a workload while any
+check fails. Correct the problem, then rerun `./scripts/validate-lab.sh m5`
+until every required check reports `PASS`.
 
 ## Step 5: Inspect Anyscale service health
 
@@ -298,11 +299,6 @@ NAME                                                 CLASS              ADDRESS 
 gateway.gateway.networking.k8s.io/anyscale-gateway   approuting-istio   20.80.176.35   True
 ```
 
-:::warning Resolve failed checks before continuing
-Do not submit the workload if any check above fails. Ray services need healthy
-Unbounded routing, ClusterFirst DNS, and an available Anyscale Gateway.
-:::
-
 ## Step 6: Verify that no workload pods remain on Flex
 
 ```bash
@@ -332,7 +328,9 @@ kube-system   nvidia-device-plugin-daemonset-abcde   1/1   Running   <flex-node-
 
 Before submission, the CPU path should show the Unbounded node and Flex
 kube-proxy system pods, while the GPU path should also show the NVIDIA device
-plugin. No AKS-managed networking daemon set should run on the Flex node. Any
+plugin. No AKS-managed networking
+[daemon set](https://kubernetes.io/docs/concepts/workloads/controllers/daemonset/)
+should run on the Flex node. Any
 application or prior Ray workload pod is left over from an earlier run and should
 finish or be removed before you continue.
 

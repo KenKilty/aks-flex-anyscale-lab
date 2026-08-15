@@ -48,7 +48,8 @@ your subscription has quota for the configured Flex node VM. You select both
 regions after you sign in and create the local configuration file.
 
 :::caution Region A must support Anyscale on Azure
-Step 4 lists the regions accepted by the `Anyscale.Platform` resource provider.
+Step 4 lists the regions accepted by the `Anyscale.Platform`
+[resource provider](https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/resource-providers-and-types).
 Later in Module 4, you run a separate check against the deployed AKS cluster to
 confirm that it can install the Anyscale operator extension. Region B does not
 need that extension.
@@ -133,7 +134,7 @@ The command prepares the local files and tools used in the rest of the lab:
 | Copies `.env-template` to `.env` if `.env` does not exist | In Step 6, you edit this file to save the regions, shared worker SKU, and other deployment values. |
 | Reads the active Azure CLI account and writes one subscription ID and one tenant ID to `.env` | Azure CLI and Terraform use the account you confirmed in Step 2. |
 | Creates an SSH key at `SSH_PRIVATE_KEY_PATH` if the key does not exist | Terraform adds the public key to the Flex node VM. Later in Module 3, the setup command uses the private key to copy the node configuration and start the Flex node service. |
-| Installs the Anyscale CLI in the repository's `.venv` | Later modules use this repository-local installation for Anyscale commands. |
+| Installs the [Anyscale CLI](https://docs.anyscale.com/reference/quickstart-cli) in the repository's `.venv` | Later modules use this repository-local installation for Anyscale commands. |
 
 On success, bootstrap ends with these four lines:
 
@@ -217,7 +218,8 @@ CPU/GPU training layout:
 ### CPU-only SKU candidates
 
 Ask Azure for up to 20 shared CPU candidates with 4-8 vCPUs. The command
-excludes restricted SKUs, non-Premium SSD SKUs, and quota families that cannot
+excludes restricted SKUs, non-[Premium SSD](https://learn.microsoft.com/en-us/azure/virtual-machines/disks-types)
+SKUs, and quota families that cannot
 provide one VM in each region:
 
 ```bash
@@ -301,7 +303,8 @@ For this option, Terraform installs the [NVIDIA GPU Driver Extension for Linux
 VMs](https://learn.microsoft.com/en-us/azure/virtual-machines/extensions/hpccompute-gpu-linux)
 on the Ubuntu 24.04 Flex node VM. In Module 5, you install the [NVIDIA device
 plugin](https://learn.microsoft.com/en-us/azure/aks/use-nvidia-gpu#nvidia-device-plugin-installation)
-on both GPU nodes and verify that each node reports one allocatable GPU.
+on both GPU nodes and verify that each node reports one
+[allocatable](https://kubernetes.io/docs/tasks/administer-cluster/reserve-compute-resources/) GPU.
 
 Confirm that `.env` contains the Region A, Region B, AKS system pool, AKS CPU
 pool, and Flex node VM values you chose:
@@ -376,4 +379,4 @@ Verify every correction by running `doctor` again.
 
 ## Next step
 
-Proceed to **[Module 2: Deploy AKS and Azure Resource](/docs/ai-workloads-on-aks/module-02-aks-foundation)**.
+Proceed to **[Module 2: Deploy AKS and Azure Resources](/docs/ai-workloads-on-aks/module-02-aks-foundation)**.

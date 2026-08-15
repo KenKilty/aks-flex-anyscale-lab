@@ -791,15 +791,22 @@ wait_for_flex_node_object() {
 }
 
 label_flex_node() {
-  local flex_node_name="$1"
+  local flex_node_name="$1" attempt
 
-  kubectl label node "${flex_node_name}" \
-    "agentpool=${AKS_FLEX_AGENT_POOL_NAME}" \
-    "kubernetes.azure.com/agentpool=${AKS_FLEX_AGENT_POOL_NAME}" \
-    "topology.kubernetes.io/region=${TF_VAR_flex_region}" \
-    "kubernetes.azure.com/cluster-" \
-    --overwrite
-  kubectl taint node "${flex_node_name}" aks-flex-node=true:NoSchedule --overwrite
+  for attempt in {1..12}; do
+    if kubectl label node "${flex_node_name}" \
+      "agentpool=${AKS_FLEX_AGENT_POOL_NAME}" \
+      "kubernetes.azure.com/agentpool=${AKS_FLEX_AGENT_POOL_NAME}" \
+      "topology.kubernetes.io/region=${TF_VAR_flex_region}" \
+      "kubernetes.azure.com/cluster-" \
+      --overwrite &&
+      kubectl taint node "${flex_node_name}" aks-flex-node=true:NoSchedule --overwrite; then
+      return 0
+    fi
+    sleep 5
+  done
+
+  die "Timed out labeling and tainting Flex node ${flex_node_name}."
 }
 
 approve_flex_daemon_csrs() {
@@ -1715,7 +1722,6 @@ main() {
       return 0
     fi
     import_untracked_anyscale_resources
-    reuse_existing_anyscale_default_admin_assignment
     drain_anyscale_jobs
     assert_no_active_anyscale_services_or_workspaces
     terminate_anyscale_system_cluster

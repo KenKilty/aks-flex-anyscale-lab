@@ -37,7 +37,9 @@ resulting compute config under `.cache/anyscale/compute-configs/`. Anyscale then
 accepts the job, the operator creates Kubernetes resources, and the Kubernetes
 [scheduler](https://kubernetes.io/docs/concepts/scheduling-eviction/kube-scheduler/)
 places the Ray pods. Both modes create one fixed worker group on managed AKS and
-one on Flex. Ray Train uses a spread placement strategy so the two training
+one on Flex. Ray Train uses a spread
+[placement strategy](https://docs.ray.io/en/latest/ray-core/scheduling/placement-group.html)
+so the two training
 actors run on different worker nodes. CPU mode selects CPU nodes, while GPU mode
 selects GPU nodes. Both modes use the same two-worker shape, sizing code, and
 Unbounded network path.
@@ -245,19 +247,18 @@ uses the corrected labels.
 
 ## Step 5: Watch the job and pod placement
 
-Copy the generated job name from the submission output into `JOB_NAME`. Then
-inspect Kubernetes placement, Anyscale state, and driver logs in that order:
+Copy the generated job name from the submission output into `JOB_NAME`. You will
+compare the generated compute config against live capacity, then inspect
+Kubernetes placement, Anyscale state, and driver logs.
 
-First compare the live allocatable values with the generated compute config.
-Set `CONFIG_NAME` to the mode you submitted. The YAML should use CPU and memory
-values no larger than the selected nodes can fit after headroom. A larger SKU
-can keep the workload target, while a smaller SKU produces a lower request.
+Start with the compute config. Set `CONFIG_NAME` to the mode you submitted. The
+YAML should use CPU and memory values no larger than the selected nodes can fit
+after headroom. A larger SKU can keep the workload target, while a smaller SKU
+produces a lower request.
 
 ```bash
-# Run the assignment that matches the workload you submitted.
-# CPU mode: CONFIG_NAME="cpu-home"
-# GPU mode: CONFIG_NAME="gpu-dual-home"
-CONFIG_NAME="gpu-dual-home"
+# CPU mode uses the line below. For GPU mode, use CONFIG_NAME="gpu-dual-home".
+CONFIG_NAME="cpu-home"
 
 kubectl get nodes \
   -o custom-columns='NODE:.metadata.name,POOL:.metadata.labels.agentpool,CPU:.status.allocatable.cpu,MEMORY:.status.allocatable.memory,GPU:.status.allocatable.nvidia\.com/gpu'
@@ -317,16 +318,25 @@ managed-gpu-worker   Running   <aks-managed-gpu-node>                1
 flex-gpu-worker      Running   <flex-node>                           1
 ```
 
-Expected GPU pod placement:
+Expected GPU pod placement from `kubectl get pods`:
 
 ```text
 NAME                                      READY   STATUS    NODE
 k-<job-name>-head-abcde                    1/1     Running   <aks-cpu-node-name>
 k-<job-name>-managed-gpu-worker-fghij      1/1     Running   <aks-gpu-node-name>
 k-<job-name>-flex-gpu-worker-klmno         1/1     Running   <flex-node-name>
+```
 
+Once the run finishes, `anyscale job status` reports the final state:
+
+```json
 "state": "SUCCEEDED"
-"WORKLOAD_SUMMARY_JSON={...}"
+```
+
+The driver logs carry the summary record that Step 6 saves to disk:
+
+```text
+WORKLOAD_SUMMARY_JSON={...}
 ```
 
 ## Step 6: Review the workload summary
@@ -341,7 +351,9 @@ managed identity using the fsspec/adlfs `az://` protocol; no SAS token or shared
 storage key is used.
 
 :::caution Storage access is required
-The Anyscale workload managed identity needs `Storage Blob Data Contributor` on the
+The Anyscale workload managed identity needs
+[`Storage Blob Data Contributor`](https://learn.microsoft.com/en-us/azure/role-based-access-control/built-in-roles/storage)
+on the
 dedicated storage account because the workload writes and reads its result. To
 download that blob with `az storage ... --auth-mode login`, you also need a
 role that grants blob access, such as `Storage Blob Data Reader` or
@@ -390,15 +402,15 @@ Expected CPU `workload-summary.json` shape. GPU mode has the same two ranks with
   },
   "storage_result": {
     "account_name": "<storage-account-name>",
-    "container_name": "flexany-dev-blob",
+    "container_name": "<container-name>",
     "client_id_present": true,
-    "path": "flexany-dev-blob/anyscale/results/<job-name>/workload-summary.json",
-    "uri": "az://flexany-dev-blob/anyscale/results/<job-name>/workload-summary.json"
+    "path": "<container-name>/anyscale/results/<job-name>/workload-summary.json",
+    "uri": "az://<container-name>/anyscale/results/<job-name>/workload-summary.json"
   }
 }
 ```
 
-## Step 7: Prove both GPU nodes trained
+## Step 7: Prove both nodes trained
 
 For CPU mode, verify that both training worker pods appear in the placement file:
 
@@ -574,10 +586,11 @@ or an object returned through the training status path.
 
 ## Step 8: Optionally inspect the workload in the Anyscale console
 
-The required Module 6 proof is complete after Step 7 shows both CUDA ranks,
-completed training steps, and concurrent managed/Flex placement. You can finish
-the module without screenshots. The optional Anyscale Console tour supplements
-that file with job state, cluster shape, application logs, and live metrics.
+The required Module 6 proof is complete after Step 7 joins each training rank to
+one managed AKS pod and one Flex pod. For the GPU path, it also shows both CUDA
+ranks and concurrent placement. You can finish the module without screenshots.
+The optional Anyscale Console tour supplements those files with job state,
+cluster shape, application logs, and live metrics.
 
 1. Open `https://console.azure.anyscale.com`.
 2. Select the cloud you created. Its name matches the Anyscale Platform cloud in

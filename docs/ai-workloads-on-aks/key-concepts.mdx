@@ -41,16 +41,20 @@ workers.
 
 This lab uses [**Ray Train**](https://docs.ray.io/en/latest/train/train.html),
 Ray's library for distributed model training. Ray Train defines a worker as a
-process that runs the training function. Its `ScalingConfig` starts two workers
-for both CPU and GPU runs in this lab.
+process that runs the training function. Its
+[`ScalingConfig`](https://docs.ray.io/en/latest/train/api/doc/ray.train.ScalingConfig.html)
+starts two workers for both CPU and GPU runs in this lab.
 
-Each worker has a **world rank**, a unique number within that training run, and
-the **world size** is the total number of workers. Both modes have world size 2,
+Each worker has a
+[**world rank**](https://docs.ray.io/en/latest/train/api/doc/ray.train.TrainContext.get_world_rank.html),
+a unique number within that training run, and the
+[**world size**](https://docs.ray.io/en/latest/train/api/doc/ray.train.TrainContext.get_world_size.html)
+is the total number of workers. Both modes have world size 2,
 with ranks 0 and 1. DeepSpeed coordinates distributed optimization between those
 two processes. A completed record from each rank proves that both worker
 processes ran the training function. Module 6 combines those records with
-Kubernetes pod placement, which proves that the processes ran in the two
-regions.
+[Kubernetes pod placement](https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node/),
+which proves that the processes ran in the two regions.
 
 The workload also uses [**DeepSpeed**](https://github.com/deepspeedai/DeepSpeed)
 to train with less GPU memory. Its [ZeRO stage 2](https://www.deepspeed.ai/tutorials/zero/)
@@ -64,21 +68,27 @@ submit a training job, let Ray Train and DeepSpeed coordinate the workers, and
 inspect the training result and worker placement. These are the same broad steps
 a practitioner follows when training or fine-tuning a language model.
 
-For the training job, the script creates a tiny GPT-2-style model, generates
-token sequences in the same shape as model input, and sends batches to the Ray
-Train workers. Each worker performs real training steps: the model predicts the
+For the training job, the script creates a tiny GPT-2-style model and feeds it
+synthetic token sequences. A token is a piece of text, such as a word or part of
+a word, that the model reads as a number. These sequences are randomly generated,
+so they carry no meaning, but they match the length and numeric form the model
+expects. They are the training equivalent of a crash-test dummy: the right size
+and shape to exercise the system, without being a real passenger. The script
+sends those batches to the Ray Train workers.
+
+Each worker performs real training steps: the model predicts the
 next token, measures how wrong the prediction was (the loss), and adjusts its
 internal weights. DeepSpeed handles the distributed updates and GPU memory use.
 
-Unlike a real fine-tuning project, this lab does not start with a pretrained
+Unlike a real-world fine-tuning project, this lab does not start with a pretrained
 model or meaningful training data. A practitioner would usually use a pretrained
 model, carefully prepared text, many more training steps, evaluation, and saved
-model checkpoints. This lab uses a small model, generated inputs, and four
+model checkpoints. This lab uses a small model, synthetic test data, and four
 training steps so the run is quick and repeatable. It proves that the distributed
 training system works across AKS and Flex; it does not produce a useful trained
 model.
 
-:::info Why Module 6 records training and placement
+:::info How you will prove the workload ran in two regions
 The workload summary shows that each Ray Train worker completed part of the
 DeepSpeed training run. Kubernetes placement data shows which node and Azure
 region hosted each worker pod. Module 6 joins those two records so you can see
@@ -89,11 +99,16 @@ regions.
 
 ## AKS Flex Node
 
-Normally, every node in an AKS cluster comes from an AKS managed node pool, and
-Azure creates and manages those machines for you.
+Traditionally, an AKS cluster and all of its nodes come from AKS managed node
+pools. Azure creates those virtual machines, joins them to the cluster, and
+manages their lifecycle for you. That model works well when the capacity you need
+is capacity Azure can provision in the cluster's own region. It also carries a
+limitation: when you already have compute somewhere else, such as GPU servers in
+your own datacenter, machines in another cloud, or spare capacity in a different
+Azure region, AKS has not been able to use those machines as cluster nodes.
 
 [**AKS Flex Node**](https://github.com/Azure/AKSFlexNode) removes that
-constraint. It lets a Linux virtual machine or bare-metal host **outside**
+limitation. It lets a Linux virtual machine or bare-metal host **outside**
 standard AKS node pools join the cluster as a worker node. You supply the machine
 and keep control of its lifecycle. Flex Node installs an agent on it and joins it
 to your cluster.
@@ -125,8 +140,9 @@ Three Anyscale terms appear in the modules:
 | [Compute config](https://docs.anyscale.com/configuration/compute) | An Anyscale configuration that defines the shape of a Ray cluster. It describes the head and worker groups, their CPU, memory, and GPU requirements, how many workers can run, and the Kubernetes node selectors used for placement. This is an Anyscale concept built on Ray cluster configuration. |
 | [Job](https://docs.anyscale.com/jobs) | A finite, submitted execution of your Ray application. The Job identifies the Python entry point and cluster configuration, starts the application, and records its state, logs, and result. Anyscale creates the Ray cluster for the Job and terminates it when the run finishes. |
 
-A Ray application is the Python program that uses Ray to distribute work. A Job
-is the managed execution of that program. In this lab, the application is the
+A Ray application is the Python program you write, and it uses Ray to spread its
+work across the cluster. A Job is one managed run of that program, from the
+moment you submit it to the state it finishes in. In this lab, the application is the
 training script, while the Anyscale Job supplies its command, image, compute
 config, lifecycle state, and logs.
 
@@ -139,7 +155,7 @@ operations over an outbound connection, then creates and manages the Ray pods
 and services through the
 [Kubernetes API](https://kubernetes.io/docs/concepts/overview/kubernetes-api/).
 The control plane does not open an inbound connection to your AKS cluster. See
-[Anyscale on Azure networking](https://learn.microsoft.com/en-us/azure/anyscale-on-azure/networking#operator-and-ray-cluster-communication)
+[Anyscale on Azure networking](https://learn.microsoft.com/en-us/azure/anyscale-on-azure/networking)
 for the documented traffic flow.
 
 After the Flex machine joins AKS and reports as a Ready node, Kubernetes can

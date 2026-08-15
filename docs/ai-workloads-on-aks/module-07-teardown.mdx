@@ -28,7 +28,7 @@ the VNet before the Flex host is unjoined, or destroying the AKS cluster before 
 Anyscale cloud is de-registered). The correct order is:
 
 1. Drain and stop active Anyscale Jobs
-2. Confirm that no active Anyscale Services or Workspaces use the lab cloud
+2. Confirm that no active [Anyscale Services](https://docs.anyscale.com/services) or [Workspaces](https://docs.anyscale.com/workspaces) use the lab cloud
 3. Terminate the Anyscale system cluster and archive the lab compute configs
 4. Let Terraform delete the Gateway, operator extension, and Azure Anyscale cloud resources in dependency order
 5. Let Terraform remove the Flex host permission and then the Flex host
