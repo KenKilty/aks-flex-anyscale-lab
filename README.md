@@ -173,8 +173,8 @@ second infrastructure delete cannot reconcile control-plane metadata.
 
 [Contributing to This Lab](CONTRIBUTING.md) describes the workshop scope and
 submission expectations. The [Developer Guide](docs/DEVELOPER.md) covers the
-repository structure, authoring conventions, validation commands, live E2E
-workflow, and pull request checklist.
+repository structure, authoring conventions, validation commands, browser-led
+end-to-end testing, and pull request checklist.
 
 Before you propose a change, run:
 

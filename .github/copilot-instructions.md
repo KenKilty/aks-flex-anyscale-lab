@@ -17,6 +17,32 @@ request explicitly requires a functional change. Keep shared prerequisites in
 Module 1 only, make CPU and GPU applicability explicit, and validate with
 Markdown lint and a production build when available.
 
+## Authoritative sources
+
+The rendered student modules in `docs/ai-workloads-on-aks/` define the lab. The
+Developer Guide in `docs/DEVELOPER.md` defines how to maintain and extend it.
+When code and a student page disagree, treat the disagreement as a defect and fix
+both in the same change.
+
+## Lab testing policy
+
+End-to-end testing goes through the rendered student lab only. Use the prompt in
+`.github/prompts/browser-led-student-lab.prompt.md`.
+
+- Do not create a script, harness, phase runner, or helper that deploys the lab
+  end to end. This repository deliberately has no such entrypoint. A harness
+  proves the scripts run; it cannot prove the instructions are followable, which
+  is the failure students actually hit.
+- Do not add a command, flag, or file that exists only for testing the lab and is
+  not part of a student module or the Developer Guide.
+- Every student-executed command must appear on a module page. If a command is
+  needed to complete the lab but is not documented, document it rather than
+  adding a helper.
+- Offline unit tests of shell logic are allowed and run through `scripts/lint.sh`.
+  They must not deploy Azure or Anyscale resources.
+- When changing a script that a module invokes, update that module page in the
+  same change, including expected output.
+
 ## Docs development workflow
 
 Always use `scripts/docs-dev.sh` to start or restart the local Docusaurus dev server.

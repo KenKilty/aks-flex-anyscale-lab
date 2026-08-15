@@ -23,7 +23,7 @@ expectations.
 | `infra/terraform/modules/` | `acr`, `aks`, `aks_public`, `dns`, `flex_host`, `identity`, `network`, `observability`, `storage` |
 | `infra/terraform/templates/` | ARM template body for the `Anyscale.Platform` cloud resource |
 | `infra/terraform/tests/` | `plan.tftest.hcl` plan-time assertions run by `terraform test` |
-| `scripts/` | Operator entrypoints, E2E harness, module gates, workload helpers, and lint |
+| `scripts/` | Operator entrypoints, module gates, workload helpers, and lint |
 | `scripts/lib/` | Shared Bash libraries: job submission, Flex network gates, timeout helpers |
 | `workloads/deepspeed_finetune/` | Ray Train and DeepSpeed workload, summary schema, and validator |
 | `src/` | Docusaurus React and CSS customizations, including `SharedMarkdown` partials |
@@ -100,10 +100,11 @@ Several entrypoints are thin wrappers. Edit the implementation, not the alias.
 | You run | Implemented by | Notes |
 | --- | --- | --- |
 | `scripts/anyscale-aks.sh <command>` | `scripts/setup.sh` | The wrapper validates the subcommand, then execs `setup.sh` |
-| `scripts/validate-lab.sh <phase>` | `scripts/validate-lab-gates.sh` | Student-facing name for the gate runner |
 | `scripts/run-anyscale-workload.sh` | `scripts/run-anyscale-results.sh` | Sizing, submission, and evidence collection live in the results script |
-| `scripts/run-anyscale-proof.sh` | `scripts/run-anyscale-workload.sh` | Retained alias; execs the workload entrypoint |
-| `scripts/validate-flex-network.sh` | `scripts/lib/flex-network-gates.sh` | Shared Flex network gates used by Modules 3 and 5 |
+
+`scripts/validate-lab.sh` is the gate runner itself, not a wrapper. Flex
+networking checks come from `scripts/lib/flex-network-gates.sh`, which both the
+validator and the workload script source.
 
 `scripts/anyscale-aks.sh` accepts `bootstrap`, `sku-options`, `doctor`, `status`,
 `render-tfvars`, `init`, `validate`, `test`, `plan`, `apply`, `destroy`,
@@ -190,20 +191,21 @@ For the complete prose rules and student acceptance criteria, read
 
 ## Lab flow
 
-The student path is module-based, and the E2E harness maps directly to those modules:
+The student modules are the authoritative definition of the lab. Each module maps
+to the commands below, and there is no separate harness that runs them:
 
-| Module | E2E phase | Main scripts |
-| --- | --- | --- |
-| 1-2 Environment + AKS foundation | `foundation` | `scripts/anyscale-aks.sh doctor`, `scripts/anyscale-aks.sh apply`, `scripts/validate-lab-gates.sh m2` |
-| 3 Flex Node | `flex` | `scripts/anyscale-aks.sh flex-config`, `scripts/anyscale-aks.sh flex-bootstrap`, `scripts/validate-lab-gates.sh m3` |
-| 4 Anyscale binding | `anyscale` | Terraform `anyscale.tf`, AKS extension, `scripts/validate-lab-gates.sh m4` |
-| 5 Readiness | `autoscale` | `scripts/install-nvidia-device-plugin.sh`, `scripts/validate-lab-gates.sh m5` |
-| 6 Workload results | `results` | `scripts/run-anyscale-workload.sh --mode both` |
-| 7 Teardown | `teardown` | `scripts/anyscale-aks.sh destroy`, `scripts/validate-lab-gates.sh teardown` |
+| Module | Student commands |
+| --- | --- |
+| 1 Environment | `scripts/anyscale-aks.sh bootstrap`, `sku-options`, `doctor` |
+| 2 AKS foundation | `scripts/anyscale-aks.sh plan`, `apply` |
+| 3 Flex Node | `scripts/anyscale-aks.sh flex-config`, `flex-bootstrap`, `scripts/validate-lab.sh m3` |
+| 4 Anyscale binding | `scripts/anyscale-aks.sh apply` with Anyscale enabled, `scripts/validate-lab.sh m4` |
+| 5 Readiness | `scripts/install-nvidia-device-plugin.sh` for GPU, `scripts/validate-lab.sh m5` |
+| 6 Workload results | `scripts/run-workload-smoke.sh`, `scripts/run-anyscale-workload.sh --mode cpu\|gpu` |
+| 7 Teardown | `scripts/anyscale-aks.sh destroy`, `scripts/validate-lab.sh teardown` |
 
-Use `scripts/run-lab-e2e.sh all` for a full live run. The runner executes the CPU
-workload unless the environment explicitly enables GPU. Use individual phases when
-resuming after a targeted fix.
+If you change any of these commands, change the owning module page in the same
+edit. A command that exists only in this guide is not part of the lab.
 
 ## Environment files
 
@@ -334,10 +336,9 @@ npm run build
 Run fast focused checks while editing:
 
 ```bash
-bash -n scripts/validate-lab-gates.sh
-bash -n scripts/run-lab-e2e.sh
-bash -n scripts/run-anyscale-workload.sh
-shellcheck scripts/validate-lab-gates.sh scripts/run-lab-e2e.sh scripts/run-anyscale-workload.sh
+bash -n scripts/validate-lab.sh
+bash -n scripts/run-anyscale-results.sh
+shellcheck scripts/*.sh
 terraform -chdir=infra/terraform fmt -check -recursive
 terraform -chdir=infra/terraform validate
 terraform -chdir=infra/terraform test
@@ -359,9 +360,20 @@ npm audit check can pass with reviewed exceptions listed in
 `scripts/audit-npm.sh`; add an exception only after reviewing the advisory and
 recording why the remaining risk is acceptable.
 
-## Live E2E testing
+## End-to-end testing
 
-Before a live E2E, confirm the baseline is clean:
+The rendered student modules are the only end-to-end test path. This repository
+has no script harness that deploys the lab, and it should not gain one. A harness
+exercises the scripts; it cannot prove that the instructions a student reads are
+correct, complete, and in a workable order. Those defects are the ones that reach
+students.
+
+Run a full test with the prompt at
+`.github/prompts/browser-led-student-lab.prompt.md`. Invoke it in VS Code chat
+and pass optional arguments to narrow scope, such as a CPU-only run or a
+suspected regression.
+
+Before starting, confirm the baseline is clean:
 
 ```bash
 terraform -chdir=infra/terraform state list
@@ -375,74 +387,51 @@ Expected clean baseline:
 false
 ```
 
-Run a full E2E:
+What the prompt does, and why each rule matters:
 
-```bash
-./scripts/run-lab-e2e.sh all
-```
+- It enters student mode after two read-only credential preflights, then treats
+  the rendered pages as the only runbook. It must not read scripts, Terraform, or
+  Markdown source to make progress, so a missing or wrong instruction fails the
+  run instead of being silently worked around.
+- It runs every command from a fresh clone in a temporary directory, so a file
+  that only exists in your working copy cannot mask a gap.
+- It leaves student mode only after an observed error or a contradiction between
+  the page and the result. The remediation loop then fixes the root cause and the
+  affected page together, revalidates, and returns to student mode.
+- It chronicles each step in `LABTEST.md` with the rendered instruction, exact
+  command, observed result, evidence, and status. Failures stay in the record.
+- It must follow the rendered teardown even after a workload failure, and must
+  not report success while any billable resource is unverified.
 
-Resume from a phase after fixing a targeted issue:
+Run it before a release, after changing module order or command text, and
+whenever a student reports that an instruction did not work.
 
-```bash
-./scripts/run-lab-e2e.sh autoscale
-./scripts/run-lab-e2e.sh results
-./scripts/run-lab-e2e.sh teardown
-```
+`LABTEST.md` and `.github/browser-led-student-lab-findings.md` are ignored. Treat
+them as run output: harvest fixes into source changes, then let the next run
+replace them.
 
-Workload results are written under `.cache/anyscale/results/`. Check summaries directly:
+### Inspect workload evidence
+
+Workload results are written under `.cache/anyscale/results/`. Check summaries
+directly:
 
 ```bash
 python3 workloads/deepspeed_finetune/validate_workload_summary.py \
   .cache/anyscale/results/<job-name>-workload-summary.json
 ```
 
-Placement comes from `<job-name>-kubernetes-placement.json`. For GPU success, the worker pod must be on `agentpool=aksflexnodes` in the Flex region and the workload summary must report `cuda_available=true` with a `device_name` that matches the selected accelerator.
+Placement comes from `<job-name>-kubernetes-placement.json`. For GPU success, the
+worker pod must be on `agentpool=aksflexnodes` in the Flex region and the workload
+summary must report `cuda_available=true` with a `device_name` that matches the
+selected accelerator.
 
-The runner writes phase timing and status to
-`.github/agents/state/e2e-run-journal.md`. Use that journal as the human-readable
-run record and keep the adjacent JSON files for automated checks.
+### Focused checks during development
 
-## Browser-led student UX testing
-
-The E2E harness proves the scripts work. It does not prove the rendered lab is
-followable. For that, use the prompt at
-`.github/prompts/browser-led-student-lab.prompt.md`, which drives an agent
-through the published site as a first-time student.
-
-Invoke it as a prompt in VS Code chat. Pass optional arguments to narrow scope,
-for example a CPU-only run or a suspected regression.
-
-How the prompt differs from `run-lab-e2e.sh`:
-
-| Aspect | `run-lab-e2e.sh` | Browser-led prompt |
-| --- | --- | --- |
-| Source of commands | Scripts and phases | Only the rendered Docusaurus pages |
-| Workspace | This checkout | A fresh clone in a temporary directory |
-| Detects | Broken automation | Broken instructions, wrong expected output, missing context |
-| Record | `.cache` state files and the run journal | `LABTEST.md` chronicle at the repository root |
-
-Rules the prompt enforces, which are the reason it finds documentation defects:
-
-- The agent enters student mode after two read-only credential preflights and
-  then treats the rendered pages as the only runbook. It must not read scripts,
-  Terraform, or Markdown source to make progress.
-- It runs every student command from a temporary clone, not this checkout, so a
-  missing repository file surfaces instead of silently resolving.
-- It leaves student mode only on an observed error or a contradiction between
-  the page and the result, follows a remediation loop that fixes the root cause
-  and the page together, then returns to student mode.
-- It chronicles each step in `LABTEST.md` with the rendered instruction, exact
-  command, observed result, evidence, and status. Failures stay in the record
-  rather than being rewritten.
-- It must follow the rendered teardown even after a workload failure, and must
-  not report completion while any billable resource is unverified.
-
-`LABTEST.md` and `.github/browser-led-student-lab-findings.md` are ignored.
-Treat them as run output: harvest the fixes into source changes, then let them
-be replaced by the next run.
-
-Run this prompt before a release, after changing module order or command text,
-and whenever a student reports that an instruction did not work.
+Unit tests for shell logic still run offline through `scripts/lint.sh`:
+`test-doctor-vm-quota.sh`, `test-sku-options.sh`, and
+`test-run-anyscale-results.sh`. They cover quota aggregation, cross-region SKU
+selection, and workload sizing. They deploy nothing and are not a substitute for
+the student run. Use them to catch a regression before you spend a live test.
 
 ## Editor and MCP tooling
 
@@ -487,12 +476,12 @@ a deployment contract that an agent could otherwise violate.
 1. Create the page in `docs/ai-workloads-on-aks/` with complete frontmatter.
 2. Register it in `sidebars.ts`; ordering is manual on purpose.
 3. Update the module tables in `README.md` and the workshop overview page.
-4. Update the `Lab flow` table below if the module maps to an E2E phase.
+4. Update the `Lab flow` table above with the module's student commands.
 5. Fix the `## Next step` link on the preceding module.
 
 ### Add a validation gate
 
-Add the check to `scripts/validate-lab-gates.sh` under the matching phase and
+Add the check to `scripts/validate-lab.sh` under the matching phase and
 reuse `scripts/lib/flex-network-gates.sh` for Flex networking. Give each check a
 stable `M<module>-<number>` identifier, because the student pages and this guide
 quote those strings as expected output. Print a concrete remediation on failure
@@ -561,7 +550,8 @@ Recurring maintenance tasks:
 Always run teardown after live tests:
 
 ```bash
-./scripts/run-lab-e2e.sh teardown
+./scripts/anyscale-aks.sh destroy
+./scripts/validate-lab.sh teardown
 terraform -chdir=infra/terraform state list
 ```
 
